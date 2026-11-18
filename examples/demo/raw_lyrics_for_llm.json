@@ -1,0 +1,76 @@
+{
+  "meta": {
+    "title": "MIDNIGHT STATIC",
+    "artist": "Vesper & Kade",
+    "language": "en",
+    "duration": 14.0,
+    "fps": 30,
+    "style": "minimal",
+    "accent_color": "#d88392"
+  },
+  "instructions": "Fill each line with natural Korean 'translation', optional Hangul 'pronunciation', and selective language-learning 'comment' ({tag, phrase, meaning, tip} or null). Save the completed result as timeline.json in this same directory.",
+  "lines": [
+    {
+      "id": 0,
+      "start": 0.0,
+      "end": 4.5,
+      "original": "Underneath the neon glow, we keep it on the low",
+      "words": [
+        { "text": "Underneath", "start": 0.0, "end": 0.7 },
+        { "text": "the", "start": 0.7, "end": 0.9 },
+        { "text": "neon", "start": 0.9, "end": 1.4 },
+        { "text": "glow,", "start": 1.4, "end": 2.0 },
+        { "text": "we", "start": 2.1, "end": 2.4 },
+        { "text": "keep", "start": 2.4, "end": 2.8 },
+        { "text": "it", "start": 2.8, "end": 3.0 },
+        { "text": "on", "start": 3.0, "end": 3.3 },
+        { "text": "the", "start": 3.3, "end": 3.6 },
+        { "text": "low", "start": 3.6, "end": 4.4 }
+      ],
+      "pronunciation": "",
+      "translation": "",
+      "comment": null
+    },
+    {
+      "id": 1,
+      "start": 4.5,
+      "end": 9.2,
+      "original": "I'm reading between the lines of every word you said",
+      "words": [
+        { "text": "I'm", "start": 4.5, "end": 4.9 },
+        { "text": "reading", "start": 4.9, "end": 5.5 },
+        { "text": "between", "start": 5.5, "end": 6.2 },
+        { "text": "the", "start": 6.2, "end": 6.5 },
+        { "text": "lines", "start": 6.5, "end": 7.2 },
+        { "text": "of", "start": 7.3, "end": 7.5 },
+        { "text": "every", "start": 7.5, "end": 8.0 },
+        { "text": "word", "start": 8.0, "end": 8.5 },
+        { "text": "you", "start": 8.5, "end": 8.8 },
+        { "text": "said", "start": 8.8, "end": 9.2 }
+      ],
+      "pronunciation": "",
+      "translation": "",
+      "comment": null
+    },
+    {
+      "id": 2,
+      "start": 9.2,
+      "end": 14.0,
+      "original": "Gotta bite the bullet now, before the morning comes",
+      "words": [
+        { "text": "Gotta", "start": 9.2, "end": 9.7 },
+        { "text": "bite", "start": 9.7, "end": 10.2 },
+        { "text": "the", "start": 10.2, "end": 10.5 },
+        { "text": "bullet", "start": 10.5, "end": 11.2 },
+        { "text": "now,", "start": 11.2, "end": 11.8 },
+        { "text": "before", "start": 11.9, "end": 12.5 },
+        { "text": "the", "start": 12.5, "end": 12.8 },
+        { "text": "morning", "start": 12.8, "end": 13.3 },
+        { "text": "comes", "start": 13.3, "end": 14.0 }
+      ],
+      "pronunciation": "",
+      "translation": "",
+      "comment": null
+    }
+  ]
+}

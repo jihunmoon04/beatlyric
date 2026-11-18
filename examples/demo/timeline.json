@@ -1,0 +1,90 @@
+{
+  "meta": {
+    "title": "MIDNIGHT STATIC",
+    "artist": "Vesper & Kade",
+    "language": "en",
+    "duration": 14.0,
+    "fps": 30,
+    "style": "minimal",
+    "accent_color": "#d88392"
+  },
+  "lines": [
+    {
+      "id": 0,
+      "start": 0.0,
+      "end": 4.5,
+      "original": "Underneath the neon glow, we keep it on the low",
+      "words": [
+        { "text": "Underneath", "start": 0.0, "end": 0.7 },
+        { "text": "the", "start": 0.7, "end": 0.9 },
+        { "text": "neon", "start": 0.9, "end": 1.4 },
+        { "text": "glow,", "start": 1.4, "end": 2.0 },
+        { "text": "we", "start": 2.1, "end": 2.4 },
+        { "text": "keep", "start": 2.4, "end": 2.8 },
+        { "text": "it", "start": 2.8, "end": 3.0 },
+        { "text": "on", "start": 3.0, "end": 3.3 },
+        { "text": "the", "start": 3.3, "end": 3.6 },
+        { "text": "low", "start": 3.6, "end": 4.4 }
+      ],
+      "pronunciation": "언더니쓰 더 니온 글로우, 위 키핏 온 더 로우",
+      "translation": "네온 불빛 아래에서, 우린 조용히 비밀을 지켜",
+      "comment": {
+        "tag": "SLANG · IDIOM",
+        "phrase": "keep it on the low",
+        "meaning": "비밀로 하다, 티 나지 않게 조용히 지내다",
+        "tip": "'on the down-low(DL)'의 줄임 표현으로 노래·일상 회화에 자주 쓰입니다."
+      }
+    },
+    {
+      "id": 1,
+      "start": 4.5,
+      "end": 9.2,
+      "original": "I'm reading between the lines of every word you said",
+      "words": [
+        { "text": "I'm", "start": 4.5, "end": 4.9 },
+        { "text": "reading", "start": 4.9, "end": 5.5 },
+        { "text": "between", "start": 5.5, "end": 6.2 },
+        { "text": "the", "start": 6.2, "end": 6.5 },
+        { "text": "lines", "start": 6.5, "end": 7.2 },
+        { "text": "of", "start": 7.3, "end": 7.5 },
+        { "text": "every", "start": 7.5, "end": 8.0 },
+        { "text": "word", "start": 8.0, "end": 8.5 },
+        { "text": "you", "start": 8.5, "end": 8.8 },
+        { "text": "said", "start": 8.8, "end": 9.2 }
+      ],
+      "pronunciation": "아임 리딩 비트윈 더 라인즈 오브 에브리 워드 유 세드",
+      "translation": "네가 한 모든 말의 숨은 뜻을 읽고 있어",
+      "comment": {
+        "tag": "EXPRESSION",
+        "phrase": "read between the lines",
+        "meaning": "행간을 읽다, 말 속의 숨은 의도를 파악하다",
+        "tip": "직역은 '줄 사이를 읽다'지만, 드러나지 않은 속뜻을 눈치챈다는 뜻입니다."
+      }
+    },
+    {
+      "id": 2,
+      "start": 9.2,
+      "end": 14.0,
+      "original": "Gotta bite the bullet now, before the morning comes",
+      "words": [
+        { "text": "Gotta", "start": 9.2, "end": 9.7 },
+        { "text": "bite", "start": 9.7, "end": 10.2 },
+        { "text": "the", "start": 10.2, "end": 10.5 },
+        { "text": "bullet", "start": 10.5, "end": 11.2 },
+        { "text": "now,", "start": 11.2, "end": 11.8 },
+        { "text": "before", "start": 11.9, "end": 12.5 },
+        { "text": "the", "start": 12.5, "end": 12.8 },
+        { "text": "morning", "start": 12.8, "end": 13.3 },
+        { "text": "comes", "start": 13.3, "end": 14.0 }
+      ],
+      "pronunciation": "가라 바잇 더 불릿 나우, 비포어 더 모닝 컴즈",
+      "translation": "아침이 오기 전에 이젠 이를 악물고 결단해야 해",
+      "comment": {
+        "tag": "CONTRACTION · IDIOM",
+        "phrase": "Gotta / bite the bullet",
+        "meaning": "~해야 한다 (have got to) / 힘든 일을 참고 해내다",
+        "tip": "노래에서는 'have got to'를 'Gotta'로 줄여 부르는 경우가 많습니다."
+      }
+    }
+  ]
+}

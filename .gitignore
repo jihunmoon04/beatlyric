@@ -1,0 +1,26 @@
+# Python / uv environments
+.venv/
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Node / Remotion build artifacts & dependencies
+renderer/node_modules/
+renderer/dist/
+renderer/.remotion/
+renderer/public/track/
+
+# Media inputs, intermediate work assets, and rendered MP4s
+input/*
+work/*
+output/*
+!input/.gitkeep
+!work/.gitkeep
+!output/.gitkeep
+
+# Secrets & OS files
+.env
+.env.*
+.DS_Store
+Thumbs.db
