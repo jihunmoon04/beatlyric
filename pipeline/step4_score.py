@@ -599,6 +599,62 @@ def ensure_score_file(
     return score
 
 
+def requantize_score_with_grid(
+    work_dir: Path,
+    bpm: float,
+    t0: float,
+    current_score: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Re-quantize original aligned lyrics onto a new (bpm, t0) grid while preserving annotations."""
+    aligned_path = work_dir / "aligned_lyrics.json"
+    raw_llm_path = work_dir / "raw_lyrics_for_llm.json"
+    timeline_path = work_dir / "timeline.json"
+    score_path = work_dir / "score.json"
+
+    source_tl: dict[str, Any] | None = None
+    for candidate in (aligned_path, raw_llm_path, timeline_path):
+        if candidate.exists():
+            source_tl = read_json(candidate)
+            break
+    if source_tl is None:
+        raise FileNotFoundError(f"No aligned_lyrics.json or timeline.json found in {work_dir}")
+
+    base_score = current_score
+    if base_score is None and score_path.exists():
+        base_score = read_json(score_path)
+
+    vocals_wav = (work_dir / "vocals.wav") if (work_dir / "vocals.wav").exists() else (work_dir / "analysis.wav")
+    ts = (base_score or {}).get("grid", {}).get("time_signature", [4, 4])
+    new_score = quantize_timeline_to_score(
+        source_tl,
+        bpm=round(float(bpm), 2),
+        t0=round(float(t0), 4),
+        time_signature=ts,
+        vocals_wav=vocals_wav,
+    )
+
+    if base_score:
+        new_score.setdefault("meta", {})
+        for key in ("style", "content_scale", "title", "artist", "language", "accent_color", "spotify_track_id", "spotify_url", "album", "added_at"):
+            if key in base_score.get("meta", {}):
+                new_score["meta"][key] = base_score["meta"][key]
+
+        by_id = {int(ln["id"]): ln for ln in base_score.get("lines", []) if "id" in ln}
+        for ln in new_score.get("lines", []):
+            prev = by_id.get(int(ln["id"]))
+            if not prev:
+                continue
+            for field in ("original", "pronunciation", "translation", "comment", "whole_line"):
+                if field in prev:
+                    ln[field] = prev[field]
+
+    new_score = enforce_score_integrity(new_score)
+    compiled = compile_score_to_timeline(new_score)
+    write_json(score_path, new_score)
+    write_json(timeline_path, compiled)
+    return new_score, compiled
+
+
 def reset_to_algorithm_score(work_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     """Restore score.json from algorithm baseline (score_initial.json) and recompile timeline.json."""
     initial_path = work_dir / "score_initial.json"

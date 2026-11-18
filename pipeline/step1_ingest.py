@@ -142,6 +142,10 @@ def run_ingest(
     fps: int = 30,
     style: str = "minimal",
     language: str = "en",
+    title_override: str | None = None,
+    artist_override: str | None = None,
+    cover_override_path: Path | None = None,
+    extra_meta: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Ingest audio/video file into standardized work directory assets."""
     ext = input_path.suffix.lower()
@@ -152,6 +156,10 @@ def run_ingest(
     probe = probe_media(input_path)
     duration = float(probe["format"]["duration"])
     title, artist = _extract_tags(input_path, probe)
+    if title_override:
+        title = title_override
+    if artist_override:
+        artist = artist_override
 
     master_audio = work_dir / "master_audio.m4a"
     analysis_wav = work_dir / "analysis.wav"
@@ -174,8 +182,19 @@ def run_ingest(
         str(analysis_wav),
     ])
 
-    # 3. Extract cover art (audio tag or mid-video frame or procedural fallback)
-    if ext in AUDIO_EXTS:
+    # 3. Extract cover art (explicit override, audio tag, mid-video frame, or procedural fallback)
+    has_cover = False
+    if cover_override_path and cover_override_path.exists():
+        img = Image.open(cover_override_path).convert("RGB")
+        w, h = img.size
+        side = min(w, h)
+        left = (w - side) // 2
+        top = (h - side) // 2
+        img.crop((left, top, left + side, top + side)).resize((800, 800), Image.Resampling.LANCZOS).save(
+            cover_jpg, "JPEG", quality=92
+        )
+        has_cover = True
+    elif ext in AUDIO_EXTS:
         has_cover = _extract_embedded_cover(input_path, cover_jpg)
     else:
         has_cover = False
@@ -213,5 +232,7 @@ def run_ingest(
         "source_type": "video" if ext in VIDEO_EXTS else "audio",
         "source_path": str(input_path.resolve()),
     }
+    if extra_meta:
+        meta.update(extra_meta)
     write_json(work_dir / "meta.json", meta)
     return meta

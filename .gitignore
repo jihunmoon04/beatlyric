@@ -22,5 +22,6 @@ output/*
 # Secrets & OS files
 .env
 .env.*
+client_secrets*.json
 .DS_Store
 Thumbs.db

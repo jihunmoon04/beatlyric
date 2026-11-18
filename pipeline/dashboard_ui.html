@@ -1,0 +1,659 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BeatLyric 자동화 대시보드</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    :root {
+      color-scheme: dark;
+      --bg: #0f1117;
+      --panel: #161922;
+      --panel-alt: #1c202b;
+      --border: #2a3040;
+      --text: #eef1f6;
+      --muted: #98a2b3;
+      --brand: #e17b8d;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font-family: 'Noto Sans KR', 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+      accent-color: var(--brand);
+    }
+
+    :where(a:any-link, button, input, select):focus-visible {
+      outline: 2px solid #fb7185;
+      outline-offset: 2px;
+    }
+
+    [role="tab"] {
+      position: relative;
+      padding-block: 0.625rem;
+      padding-inline: 0.75rem;
+      white-space: nowrap;
+    }
+
+    [role="tab"][aria-selected="true"] {
+      color: #fda4af;
+    }
+
+    [role="tab"][aria-selected="true"]::after {
+      content: "";
+      position: absolute;
+      inset: auto 0 0;
+      border-block-end: 3px solid #fb7185;
+    }
+
+    .visually-hidden {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip-path: inset(50%);
+      white-space: nowrap;
+      border: 0;
+    }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+  <header class="bg-[#161922] border-b border-[#2a3040] px-5 py-3 flex flex-wrap items-center justify-between gap-4">
+    <div class="flex items-center gap-3">
+      <span class="px-2.5 py-1 text-xs font-semibold rounded bg-rose-500/20 text-rose-300 border border-rose-400/30">BeatLyric</span>
+      <div>
+        <h1 class="text-base font-bold text-white leading-tight">자동화 대시보드</h1>
+        <p class="text-xs text-slate-400">Spotify 증분 동기화 → 자동 준비(Demucs · CTC · 박자) → 검수 → 1080p 렌더링 &amp; 비공개 업로드</p>
+      </div>
+    </div>
+
+    <nav aria-label="주 메뉴" class="flex flex-wrap items-center gap-2 text-xs">
+      <span id="badge-acp" class="px-2.5 py-1 rounded border border-slate-600 text-slate-300 text-[11px]">ACP 확인 중</span>
+      <a href="/dashboard" aria-current="page"
+        class="px-3 py-1.5 rounded bg-rose-500/20 border border-rose-400/40 text-rose-200 font-semibold">
+        대시보드
+      </a>
+      <a id="nav-studio-link" href="/studio"
+        class="px-3 py-1.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200">
+        박자 스튜디오
+      </a>
+    </nav>
+  </header>
+
+  <!-- Live status region -->
+  <div id="live-banner" aria-live="polite" class="bg-[#131620] border-b border-[#232938] px-5 py-2 text-xs text-slate-300 flex items-center justify-between gap-3">
+    <span id="live-status-text">대시보드 상태 불러오는 중...</span>
+    <span id="live-sync-clock" class="text-[11px] text-slate-500 font-mono"></span>
+  </div>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto p-5 space-y-5">
+    <!-- Top Integration Row: Spotify + YouTube + Manual Add -->
+    <section class="grid grid-cols-1 lg:grid-cols-12 gap-4">
+      <!-- Spotify Sync Panel -->
+      <div class="lg:col-span-7 bg-[#161922] border border-[#2a3040] rounded-xl p-4 space-y-3">
+        <div class="flex flex-wrap items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-white">Spotify 플레이리스트 증분 동기화</h2>
+            <span id="badge-spotify" class="px-2 py-0.5 text-[11px] rounded border border-slate-600 text-slate-300">확인 중</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <a id="btn-spotify-login" href="/api/spotify/login"
+              class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold">
+              Spotify 로그인
+            </a>
+            <button id="btn-spotify-logout" type="button" hidden
+              class="px-2.5 py-1.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-300 text-xs cursor-pointer">
+              연결 해제
+            </button>
+          </div>
+        </div>
+
+        <div class="grid grid-cols-1 sm:grid-cols-12 gap-2.5 items-end text-xs">
+          <div class="sm:col-span-7">
+            <label for="inp-playlist-id" class="block text-slate-400 mb-1">대상 플레이리스트 (URL 또는 ID)</label>
+            <input id="inp-playlist-id" type="text"
+              class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2.5 py-1.5 text-white font-mono text-xs"
+              placeholder="https://open.spotify.com/playlist/..." />
+          </div>
+          <div class="sm:col-span-5">
+            <label for="sel-user-playlists" class="block text-slate-400 mb-1">내 플레이리스트 선택</label>
+            <select id="sel-user-playlists"
+              class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2.5 py-1.5 text-slate-200 text-xs">
+              <option value="">로그인 후 목록 불러오기</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="flex flex-wrap items-center justify-between gap-2 pt-1 text-[11px] text-slate-400">
+          <div id="lbl-sync-meta" class="space-x-3">
+            <span>플레이리스트: -</span>
+            <span>마지막 동기화 기준(added_at): 없음</span>
+          </div>
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button id="btn-sync-incremental" type="button"
+              class="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer">
+              새 곡 동기화 (증분)
+            </button>
+            <button id="btn-sync-baseline" type="button"
+              class="px-2.5 py-1.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200 cursor-pointer"
+              title="기존 곡은 건너뛰고 현재 시점을 기준 시각으로 기록합니다">
+              기준 시각 지금으로 설정
+            </button>
+            <button id="btn-sync-latest3" type="button"
+              class="px-2.5 py-1.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200 cursor-pointer">
+              최근 3곡 가져오기
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- YouTube & Manual Enqueue Panel -->
+      <div class="lg:col-span-5 bg-[#161922] border border-[#2a3040] rounded-xl p-4 space-y-3">
+        <div class="flex items-center justify-between gap-2">
+          <div class="flex items-center gap-2">
+            <h2 class="text-sm font-bold text-white">YouTube 비공개 업로드</h2>
+            <span id="badge-youtube" class="px-2 py-0.5 text-[11px] rounded border border-slate-600 text-slate-300">확인 중</span>
+          </div>
+          <button id="btn-youtube-auth" type="button"
+            class="px-2.5 py-1 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200 text-xs cursor-pointer">
+            YouTube 연결
+          </button>
+        </div>
+        <p id="lbl-youtube-hint" class="text-[11px] text-slate-400">
+          루트 폴더에 <code class="text-slate-300">client_secrets.json</code>을 두면 검수 완료 시 자동 비공개 업로드됩니다. (미설정 시 로컬 MP4 렌더링까지만 수행)
+        </p>
+
+        <hr class="border-[#242a38]" />
+
+        <form id="form-manual-add" class="space-y-2 text-xs">
+          <h3 class="font-semibold text-slate-200">수동 곡 추가 (URL 또는 input/ 매칭)</h3>
+          <div class="grid grid-cols-2 gap-2">
+            <div>
+              <label for="inp-manual-artist" class="block text-slate-400 mb-0.5">아티스트</label>
+              <input id="inp-manual-artist" type="text" required
+                class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2 py-1 text-white" placeholder="Teriyaki Boyz" />
+            </div>
+            <div>
+              <label for="inp-manual-title" class="block text-slate-400 mb-0.5">곡 제목</label>
+              <input id="inp-manual-title" type="text" required
+                class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2 py-1 text-white" placeholder="Tokyo Drift" />
+            </div>
+          </div>
+          <div class="grid grid-cols-12 gap-2 items-end">
+            <div class="col-span-7">
+              <label for="inp-manual-url" class="block text-slate-400 mb-0.5">YouTube URL (선택)</label>
+              <input id="inp-manual-url" type="url"
+                class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2 py-1 text-white" placeholder="https://youtu.be/..." />
+            </div>
+            <div class="col-span-3">
+              <label for="sel-manual-style" class="block text-slate-400 mb-0.5">스타일</label>
+              <select id="sel-manual-style" class="w-full rounded bg-[#1c202b] border border-[#2a3040] px-2 py-1 text-white">
+                <option value="minimal">minimal</option>
+                <option value="editorial">editorial</option>
+                <option value="classic2">classic2</option>
+              </select>
+            </div>
+            <div class="col-span-2">
+              <button type="submit" class="w-full py-1.5 rounded bg-[#252b3b] hover:bg-[#31394f] border border-[#3a435a] text-white font-semibold cursor-pointer">
+                추가
+              </button>
+            </div>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <!-- Track Queue Section -->
+    <section class="bg-[#161922] border border-[#2a3040] rounded-xl overflow-hidden">
+      <div class="border-b border-[#2a3040] px-4 flex flex-wrap items-center justify-between gap-3">
+        <div id="queue-tablist" role="tablist" aria-label="작업 대기열 상태 필터" class="flex items-center gap-1 overflow-x-auto text-xs font-medium text-slate-400">
+          <button type="button" role="tab" id="tab-all" data-filter="all" aria-selected="true" tabindex="0">전체 (<span data-count="all">0</span>)</button>
+          <button type="button" role="tab" id="tab-prepare" data-filter="prepare" aria-selected="false" tabindex="-1">준비 중 / 대기 (<span data-count="prepare">0</span>)</button>
+          <button type="button" role="tab" id="tab-review" data-filter="review" aria-selected="false" tabindex="-1">검수 대기 (<span data-count="review">0</span>)</button>
+          <button type="button" role="tab" id="tab-render" data-filter="render" aria-selected="false" tabindex="-1">렌더 / 업로드 (<span data-count="render">0</span>)</button>
+          <button type="button" role="tab" id="tab-done" data-filter="done" aria-selected="false" tabindex="-1">완료 / 오류 (<span data-count="done">0</span>)</button>
+        </div>
+        <button id="btn-refresh" type="button"
+          class="my-1.5 px-2.5 py-1 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-xs text-slate-300 cursor-pointer">
+          새로고침
+        </button>
+      </div>
+
+      <div id="queue-tabpanel" role="tabpanel" aria-labelledby="tab-all" class="p-4">
+        <div id="track-list" class="space-y-2.5"></div>
+      </div>
+    </section>
+
+    <!-- Worker Activity Log -->
+    <section class="bg-[#161922] border border-[#2a3040] rounded-xl p-4 space-y-2">
+      <h2 class="text-xs font-bold text-slate-300 uppercase tracking-wider">백그라운드 워커 로그</h2>
+      <div id="worker-logs" class="bg-[#0d1017] border border-[#222836] rounded-lg p-3 h-36 overflow-y-auto font-mono text-[11px] text-slate-300 space-y-1"></div>
+    </section>
+  </main>
+
+  <script>
+    const uiState = {
+      filter: "all",
+      dashboard: null,
+      pollTimer: null,
+    };
+
+    const STATUS_META = {
+      queued_prepare: { label: "준비 대기", cls: "bg-slate-500/20 text-slate-300 border-slate-500/40", group: "prepare" },
+      preparing:      { label: "자동 준비 중", cls: "bg-sky-500/20 text-sky-300 border-sky-400/40", group: "prepare" },
+      needs_review:   { label: "검수 대기", cls: "bg-amber-500/20 text-amber-200 border-amber-400/40", group: "review" },
+      queued_render:  { label: "렌더 대기", cls: "bg-indigo-500/20 text-indigo-300 border-indigo-400/40", group: "render" },
+      rendering:      { label: "MP4 렌더링 중", cls: "bg-violet-500/20 text-violet-300 border-violet-400/40", group: "render" },
+      queued_upload:  { label: "업로드 대기", cls: "bg-indigo-500/20 text-indigo-300 border-indigo-400/40", group: "render" },
+      uploading:      { label: "YouTube 업로드 중", cls: "bg-rose-500/20 text-rose-200 border-rose-400/40", group: "render" },
+      rendered:       { label: "렌더 완료", cls: "bg-emerald-500/20 text-emerald-300 border-emerald-400/40", group: "done" },
+      uploaded:       { label: "비공개 업로드 완료", cls: "bg-emerald-600/25 text-emerald-200 border-emerald-400/50", group: "done" },
+      failed:         { label: "오류", cls: "bg-red-500/20 text-red-300 border-red-400/40", group: "done" },
+    };
+
+    function escapeHtml(str) {
+      return String(str ?? "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;");
+    }
+
+    function fmtDuration(sec) {
+      if (!sec || sec <= 0) return "--:--";
+      const m = Math.floor(sec / 60);
+      const s = Math.floor(sec % 60);
+      return `${m}:${String(s).padStart(2, "0")}`;
+    }
+
+    function setLiveStatus(text, isError = false) {
+      const el = document.getElementById("live-status-text");
+      el.textContent = text;
+      el.className = isError ? "text-rose-300 font-medium" : "text-slate-300";
+    }
+
+    // Accessible Tablist behavior
+    const tabButtons = Array.from(document.querySelectorAll('#queue-tablist [role="tab"]'));
+    const tabPanel = document.getElementById("queue-tabpanel");
+
+    function selectTab(btn, moveFocus = false) {
+      tabButtons.forEach((t) => {
+        const selected = t === btn;
+        t.setAttribute("aria-selected", selected ? "true" : "false");
+        t.setAttribute("tabindex", selected ? "0" : "-1");
+      });
+      uiState.filter = btn.dataset.filter;
+      tabPanel.setAttribute("aria-labelledby", btn.id);
+      if (moveFocus) btn.focus();
+      renderTrackList();
+    }
+
+    tabButtons.forEach((btn, idx) => {
+      btn.addEventListener("click", () => selectTab(btn, false));
+      btn.addEventListener("keydown", (e) => {
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          selectTab(tabButtons[(idx + 1) % tabButtons.length], true);
+        } else if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          selectTab(tabButtons[(idx - 1 + tabButtons.length) % tabButtons.length], true);
+        } else if (e.key === "Home") {
+          e.preventDefault();
+          selectTab(tabButtons[0], true);
+        } else if (e.key === "End") {
+          e.preventDefault();
+          selectTab(tabButtons[tabButtons.length - 1], true);
+        }
+      });
+    });
+
+    async function fetchDashboard() {
+      try {
+        const res = await fetch("/api/dashboard");
+        const data = await res.json();
+        uiState.dashboard = data;
+        renderDashboard();
+        document.getElementById("live-sync-clock").textContent = `갱신: ${new Date().toLocaleTimeString()}`;
+
+        const hasActive = (data.tracks || []).some((t) =>
+          ["queued_prepare", "preparing", "queued_render", "rendering", "queued_upload", "uploading"].includes(t.status)
+        );
+        scheduleNextPoll(hasActive ? 2500 : 8000);
+      } catch (err) {
+        setLiveStatus(`대시보드 조회 실패: ${err}`, true);
+        scheduleNextPoll(8000);
+      }
+    }
+
+    function scheduleNextPoll(ms) {
+      if (uiState.pollTimer) clearTimeout(uiState.pollTimer);
+      uiState.pollTimer = setTimeout(fetchDashboard, ms);
+    }
+
+    function renderDashboard() {
+      const data = uiState.dashboard;
+      if (!data) return;
+
+      // Spotify auth badge
+      const sp = data.spotify || {};
+      const badgeSp = document.getElementById("badge-spotify");
+      const btnLogin = document.getElementById("btn-spotify-login");
+      const btnLogout = document.getElementById("btn-spotify-logout");
+      if (!sp.configured) {
+        badgeSp.textContent = ".env 키 미설정";
+        badgeSp.className = "px-2 py-0.5 text-[11px] rounded border border-amber-400/40 bg-amber-500/15 text-amber-200";
+      } else if (sp.connected) {
+        const userLabel = sp.user?.display_name || sp.user?.id || "연결됨";
+        badgeSp.textContent = `연결됨 (${userLabel})`;
+        badgeSp.className = "px-2 py-0.5 text-[11px] rounded border border-emerald-400/40 bg-emerald-500/15 text-emerald-200";
+        btnLogin.textContent = "재연결";
+        btnLogout.hidden = false;
+        loadUserPlaylistsIfEmpty();
+      } else {
+        badgeSp.textContent = "로그인 필요";
+        badgeSp.className = "px-2 py-0.5 text-[11px] rounded border border-rose-400/40 bg-rose-500/15 text-rose-200";
+        btnLogin.textContent = "Spotify 로그인";
+        btnLogout.hidden = true;
+      }
+
+      const plInput = document.getElementById("inp-playlist-id");
+      const syncMeta = data.spotify_sync || {};
+      if (!plInput.value && (syncMeta.playlist_id || sp.default_playlist_id)) {
+        plInput.value = syncMeta.playlist_id || sp.default_playlist_id;
+      }
+
+      document.getElementById("lbl-sync-meta").innerHTML = `
+        <span>플레이리스트: <strong class="text-slate-200">${escapeHtml(syncMeta.playlist_name || syncMeta.playlist_id || "-")}</strong></span>
+        <span>마지막 기준(added_at): <strong class="text-slate-200">${escapeHtml(syncMeta.last_synced_at || "없음")}</strong></span>
+      `;
+
+      // YouTube badge
+      const yt = data.youtube || {};
+      const badgeYt = document.getElementById("badge-youtube");
+      if (!yt.configured) {
+        badgeYt.textContent = "client_secrets.json 없음";
+        badgeYt.className = "px-2 py-0.5 text-[11px] rounded border border-slate-600 text-slate-300";
+      } else if (yt.connected) {
+        badgeYt.textContent = "OAuth 연결됨";
+        badgeYt.className = "px-2 py-0.5 text-[11px] rounded border border-emerald-400/40 bg-emerald-500/15 text-emerald-200";
+      } else {
+        badgeYt.textContent = "OAuth 로그인 필요";
+        badgeYt.className = "px-2 py-0.5 text-[11px] rounded border border-amber-400/40 bg-amber-500/15 text-amber-200";
+      }
+
+      // ACP badge
+      const acp = data.acp || {};
+      const badgeAcp = document.getElementById("badge-acp");
+      if (acp.available) {
+        badgeAcp.textContent = `ACP: ${acp.model || "gemini-4-hydrogen-medium"}`;
+        badgeAcp.className = "px-2.5 py-1 rounded border border-sky-400/40 bg-sky-500/15 text-sky-200 text-[11px]";
+      } else {
+        badgeAcp.textContent = "ACP 미감지";
+        badgeAcp.className = "px-2.5 py-1 rounded border border-slate-600 text-slate-400 text-[11px]";
+      }
+
+      // Counts & studio default link
+      const tracks = data.tracks || [];
+      const counts = { all: tracks.length, prepare: 0, review: 0, render: 0, done: 0 };
+      let firstStudioSlug = null;
+      for (const tr of tracks) {
+        const grp = (STATUS_META[tr.status] || STATUS_META.needs_review).group;
+        counts[grp] = (counts[grp] || 0) + 1;
+        if (!firstStudioSlug && ["needs_review", "rendered", "uploaded", "queued_render"].includes(tr.status)) {
+          firstStudioSlug = tr.slug;
+        }
+      }
+      for (const [k, v] of Object.entries(counts)) {
+        const el = document.querySelector(`[data-count="${k}"]`);
+        if (el) el.textContent = String(v);
+      }
+      if (firstStudioSlug) {
+        document.getElementById("nav-studio-link").href = `/studio?track=${encodeURIComponent(firstStudioSlug)}`;
+      }
+
+      renderTrackList();
+      renderWorkerLogs(data.logs || []);
+    }
+
+    function renderTrackList() {
+      const container = document.getElementById("track-list");
+      const tracks = (uiState.dashboard?.tracks || []).filter((tr) => {
+        if (uiState.filter === "all") return true;
+        const grp = (STATUS_META[tr.status] || STATUS_META.needs_review).group;
+        return grp === uiState.filter;
+      });
+
+      if (!tracks.length) {
+        container.innerHTML = `<div class="py-10 text-center text-xs text-slate-400">해당 상태의 곡이 없습니다. 위에서 Spotify 플레이리스트를 동기화하거나 곡을 추가해 보세요.</div>`;
+        return;
+      }
+
+      container.innerHTML = tracks.map((tr) => {
+        const st = STATUS_META[tr.status] || { label: tr.status, cls: "bg-slate-600/20 text-slate-300 border-slate-500/40" };
+        const canOpenStudio = ["needs_review", "queued_render", "rendering", "queued_upload", "uploading", "rendered", "uploaded"].includes(tr.status);
+        const coverSrc = canOpenStudio ? `/media/${encodeURIComponent(tr.slug)}/cover.jpg` : (tr.cover_url || "");
+        const coverHtml = coverSrc
+          ? `<img src="${escapeHtml(coverSrc)}" alt="${escapeHtml(tr.title)} 앨범 커버" class="w-14 h-14 rounded-lg object-cover border border-[#2a3040] shrink-0 bg-[#0d1017]" onerror="this.style.display='none'" />`
+          : `<div class="w-14 h-14 rounded-lg border border-[#2a3040] bg-[#1c202b] shrink-0 flex items-center justify-center text-xs text-slate-500">♪</div>`;
+
+        const ytLink = tr.youtube?.url
+          ? `<a href="${escapeHtml(tr.youtube.url)}" target="_blank" rel="noopener noreferrer" class="px-2.5 py-1.5 rounded bg-emerald-600/20 hover:bg-emerald-600/30 border border-emerald-400/40 text-emerald-200 text-xs font-medium">YouTube 비공개 보기 ↗</a>`
+          : "";
+
+        const studioBtn = canOpenStudio
+          ? `<a href="/studio?track=${encodeURIComponent(tr.slug)}" class="px-3 py-1.5 rounded bg-[#252b3b] hover:bg-[#31394f] border border-[#3a435a] text-white text-xs font-medium">스튜디오에서 검수</a>`
+          : "";
+
+        const acpBtn = (canOpenStudio && uiState.dashboard?.acp?.available)
+          ? `<button type="button" data-action="enrich_acp" data-slug="${escapeHtml(tr.slug)}" class="px-2.5 py-1.5 rounded bg-sky-600/20 hover:bg-sky-600/30 border border-sky-400/40 text-sky-200 text-xs font-medium cursor-pointer">ACP 주석</button>`
+          : "";
+
+        const approveBtn = tr.status === "needs_review"
+          ? `<button type="button" data-action="approve" data-slug="${escapeHtml(tr.slug)}" data-style="${escapeHtml(tr.style || 'minimal')}" class="px-3 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold cursor-pointer">검수 완료 · 업로드 대기열 추가</button>`
+          : "";
+
+        const retryBtn = tr.status === "failed"
+          ? `<button type="button" data-action="retry" data-slug="${escapeHtml(tr.slug)}" class="px-3 py-1.5 rounded bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold cursor-pointer">재시도</button>`
+          : "";
+
+        const errBox = tr.error
+          ? `<details class="mt-1.5 text-[11px] text-red-300/90"><summary class="cursor-pointer">오류 상세 보기</summary><pre class="mt-1 p-2 rounded bg-black/40 overflow-x-auto whitespace-pre-wrap">${escapeHtml(tr.error)}</pre></details>`
+          : "";
+
+        return `
+          <article class="rounded-lg border border-[#2a3040] bg-[#1c202b]/70 p-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-start gap-3 min-w-0">
+              ${coverHtml}
+              <div class="min-w-0 space-y-1">
+                <div class="flex flex-wrap items-center gap-2">
+                  <span class="px-2 py-0.5 text-[11px] font-semibold rounded border ${st.cls}">${escapeHtml(st.label)}</span>
+                  <h3 class="text-sm font-bold text-white truncate">${escapeHtml(tr.title)}</h3>
+                  <span class="text-xs text-slate-400 truncate">— ${escapeHtml(tr.artist)}</span>
+                </div>
+                <div class="flex flex-wrap items-center gap-2 text-[11px] text-slate-400">
+                  <span class="font-mono">${fmtDuration(tr.duration)}</span>
+                  <span>·</span>
+                  <span>스타일: ${escapeHtml(tr.style || "minimal")}</span>
+                  <span>·</span>
+                  <span>${escapeHtml(tr.step_message || "")}</span>
+                </div>
+                ${errBox}
+              </div>
+            </div>
+            <div class="flex flex-wrap items-center gap-2 shrink-0">
+              ${studioBtn}
+              ${acpBtn}
+              ${approveBtn}
+              ${ytLink}
+              ${retryBtn}
+            </div>
+          </article>
+        `;
+      }).join("");
+    }
+
+    function renderWorkerLogs(logs) {
+      const el = document.getElementById("worker-logs");
+      if (!logs.length) {
+        el.innerHTML = `<div class="text-slate-500">아직 기록된 워커 로그가 없습니다.</div>`;
+        return;
+      }
+      el.innerHTML = logs.slice().reverse().map((entry) => {
+        const cls = entry.level === "error" ? "text-rose-300" : "text-slate-300";
+        return `<div class="${cls}"><span class="text-slate-500">[${escapeHtml(entry.ts)}]</span> <span class="text-sky-300">${escapeHtml(entry.slug)}</span> ${escapeHtml(entry.message)}</div>`;
+      }).join("");
+    }
+
+    let playlistsLoaded = false;
+    async function loadUserPlaylistsIfEmpty() {
+      if (playlistsLoaded) return;
+      playlistsLoaded = true;
+      try {
+        const res = await fetch("/api/spotify/playlists");
+        if (!res.ok) return;
+        const data = await res.json();
+        const sel = document.getElementById("sel-user-playlists");
+        const items = data.playlists || [];
+        sel.innerHTML = `<option value="">내 플레이리스트에서 고르기 (${items.length})</option>` +
+          items.map((pl) => `<option value="${escapeHtml(pl.id)}">${escapeHtml(pl.name)} (${escapeHtml(pl.owner)})</option>`).join("");
+      } catch (_) {}
+    }
+
+    document.getElementById("sel-user-playlists").addEventListener("change", (e) => {
+      if (e.target.value) {
+        document.getElementById("inp-playlist-id").value = e.target.value;
+      }
+    });
+
+    async function runSpotifySync(mode, limit = 5) {
+      const playlistId = document.getElementById("inp-playlist-id").value.trim();
+      setLiveStatus(`Spotify 동기화 실행 중 (${mode})...`);
+      try {
+        const res = await fetch("/api/spotify/sync", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ playlist_id: playlistId, mode, limit }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setLiveStatus(data.error || "Spotify 동기화 실패", true);
+          return;
+        }
+        const n = (data.enqueued || []).length;
+        setLiveStatus(
+          mode === "baseline_only"
+            ? `기준 시각 설정 완료 (${data.skipped_existing || 0}곡 건너뜀)`
+            : `Spotify 동기화 완료: 새 곡 ${n}개 대기열 추가`
+        );
+        await fetchDashboard();
+      } catch (err) {
+        setLiveStatus(String(err), true);
+      }
+    }
+
+    document.getElementById("btn-sync-incremental").addEventListener("click", () => runSpotifySync("incremental"));
+    document.getElementById("btn-sync-baseline").addEventListener("click", () => runSpotifySync("baseline_only"));
+    document.getElementById("btn-sync-latest3").addEventListener("click", () => runSpotifySync("latest_n", 3));
+    document.getElementById("btn-refresh").addEventListener("click", fetchDashboard);
+
+    document.getElementById("btn-spotify-logout").addEventListener("click", async () => {
+      await fetch("/api/spotify/logout", { method: "POST" });
+      playlistsLoaded = false;
+      setLiveStatus("Spotify 연결을 해제했습니다.");
+      fetchDashboard();
+    });
+
+    document.getElementById("btn-youtube-auth").addEventListener("click", async () => {
+      setLiveStatus("브라우저에서 Google OAuth 로그인 창을 여는 중...");
+      const res = await fetch("/api/youtube/auth", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setLiveStatus(data.error || "YouTube 인증 실패", true);
+      } else {
+        setLiveStatus("YouTube OAuth 연결이 완료되었습니다.");
+      }
+      fetchDashboard();
+    });
+
+    document.getElementById("form-manual-add").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const artist = document.getElementById("inp-manual-artist").value.trim();
+      const title = document.getElementById("inp-manual-title").value.trim();
+      const source_url = document.getElementById("inp-manual-url").value.trim();
+      const style = document.getElementById("sel-manual-style").value;
+      setLiveStatus(`수동 곡 추가 중: ${artist} - ${title}...`);
+      const res = await fetch("/api/tracks/enqueue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ artist, title, source_url, style }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setLiveStatus(data.error || "곡 추가 실패", true);
+        return;
+      }
+      e.target.reset();
+      setLiveStatus(`대기열 추가 완료: ${data.track.slug}`);
+      fetchDashboard();
+    });
+
+    document.getElementById("track-list").addEventListener("click", async (e) => {
+      const btn = e.target.closest("button[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      const slug = btn.dataset.slug;
+      btn.disabled = true;
+      try {
+        if (action === "approve") {
+          const res = await fetch(`/api/tracks/${encodeURIComponent(slug)}/approve`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ style: btn.dataset.style || "minimal", upload_to_youtube: true }),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "승인 실패");
+          setLiveStatus(`${slug}: 검수 완료 → 렌더링/업로드 대기열에 추가됨`);
+        } else if (action === "retry") {
+          const res = await fetch(`/api/tracks/${encodeURIComponent(slug)}/retry`, { method: "POST" });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "재시도 실패");
+          setLiveStatus(`${slug}: 재시도 대기열에 추가됨`);
+        } else if (action === "enrich_acp") {
+          const res = await fetch(`/api/tracks/${encodeURIComponent(slug)}/enrich_acp`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({}),
+          });
+          const data = await res.json();
+          if (!res.ok || !data.ok) throw new Error(data.error || "ACP 주석 실행 실패");
+          setLiveStatus(`${slug}: agy acp (${data.model}) 학습 노트 생성 시작됨`);
+        }
+        await fetchDashboard();
+      } catch (err) {
+        setLiveStatus(String(err), true);
+        btn.disabled = false;
+      }
+    });
+
+    // Show OAuth callback status from query string
+    const params = new URLSearchParams(window.location.search);
+    if (params.get("spotify") === "connected") {
+      setLiveStatus("Spotify 로그인이 완료되었습니다! '새 곡 동기화' 또는 '기준 시각 지금으로 설정'을 눌러보세요.");
+    } else if (params.get("spotify_error")) {
+      setLiveStatus(`Spotify 로그인 오류: ${params.get("spotify_error")}`, true);
+    } else {
+      setLiveStatus("대시보드 준비 완료");
+    }
+
+    fetchDashboard();
+  </script>
+</body>
+</html>

@@ -165,6 +165,9 @@
   <!-- Top Header Bar -->
   <header class="bg-[#161922] border-b border-[#2a3040] px-4 py-2.5 flex flex-wrap items-center justify-between gap-3">
     <div class="flex items-center gap-3">
+      <a href="/dashboard" class="px-2.5 py-1 text-xs rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200">
+        ← 대시보드
+      </a>
       <span class="px-2 py-0.5 text-xs font-semibold rounded bg-rose-500/20 text-rose-300 border border-rose-400/30">Beat Score Studio</span>
       <div>
         <h1 id="hdr-title" class="text-sm font-bold text-white leading-tight">로딩 중...</h1>
@@ -208,6 +211,9 @@
       </label>
       <button id="btn-save" type="button" class="px-3 py-1.5 rounded bg-[#252b3b] hover:bg-[#31394f] border border-[#3a435a] text-white font-medium cursor-pointer">
         저장 (score + timeline)
+      </button>
+      <button id="btn-approve" type="button" class="px-3 py-1.5 rounded bg-emerald-600 hover:bg-emerald-500 text-white font-semibold cursor-pointer shadow">
+        검수 완료 · 업로드 대기열 추가
       </button>
       <button id="btn-render" type="button" class="px-3.5 py-1.5 rounded bg-rose-600 hover:bg-rose-500 text-white font-semibold cursor-pointer shadow">
         확인 완료 · MP4 렌더링
@@ -303,13 +309,41 @@
         <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
           <div class="flex flex-wrap items-center gap-2">
             <span class="font-semibold text-white">전체 박자 악보 (0.5박 단위)</span>
-            <span class="text-[11px] text-slate-400">좌드래그 이동/길이 · 우클릭 드래그 좌우 스크롤 · 블록 우클릭 한줄전체</span>
+            <span id="lbl-sel-count" class="px-2 py-0.5 rounded bg-[#1c202b] border border-[#2a3040] text-[11px] text-rose-200 font-mono">선택 1줄</span>
+            <span class="text-[11px] text-slate-400">Ctrl+클릭 다중 · Shift+클릭 범위 · 우클릭 이동/한줄전체</span>
           </div>
           <div class="flex items-center gap-1.5">
+            <button id="btn-select-all" type="button" title="Ctrl+A" class="px-2 py-0.5 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] text-slate-200 cursor-pointer">전체 선택</button>
             <button id="btn-zoom-out" type="button" class="px-2 py-0.5 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] cursor-pointer">-</button>
             <span class="text-[11px] text-slate-400">줌</span>
             <button id="btn-zoom-in" type="button" class="px-2 py-0.5 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] cursor-pointer">+</button>
           </div>
+        </div>
+
+        <!-- 4-Beat Tap Tempo & Beat Grid Re-Alignment Bar -->
+        <div class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#121620] border border-[#242a38] text-[11px]">
+          <div class="flex flex-wrap items-center gap-1.5">
+            <button id="btn-tap-beat" type="button" title="재생 중에 음악의 1·2·3·4박을 순서대로 4번 누르세요 (단축키: B)"
+              class="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-500 text-white font-semibold cursor-pointer">
+              4박 탭 (B · 0/4)
+            </button>
+            <button id="btn-set-downbeat" type="button" title="현재 재생 헤드 위치를 마디의 1박(t0) 기준으로 맞춥니다"
+              class="px-2.5 py-1 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200 cursor-pointer">
+              현 위치 = 1박(t0)
+            </button>
+            <button id="btn-requantize-now" type="button" title="현재 BPM과 t0 눈금에 맞춰 보컬 온셋 기준으로 가사를 다시 배치합니다"
+              class="px-2.5 py-1 rounded bg-sky-600/25 hover:bg-sky-600/40 border border-sky-400/40 text-sky-200 font-medium cursor-pointer">
+              보컬 기준 가사 재배치
+            </button>
+          </div>
+          <label class="inline-flex items-center gap-1.5 text-slate-300">
+            <span class="text-slate-400">박자 변경 시</span>
+            <select id="sel-realign-mode" class="bg-[#1c202b] border border-[#2a3040] rounded px-1.5 py-0.5 text-slate-100 cursor-pointer">
+              <option value="vocals">자동 가사 재배치 (보컬 재정렬)</option>
+              <option value="preserve">현재 위치 유지 스냅</option>
+              <option value="grid_only">그리드만 이동 (마디/박 고정)</option>
+            </select>
+          </label>
         </div>
 
         <!-- Main Horizontal Bar/Beat Score Ruler + Blocks -->
@@ -389,9 +423,13 @@
 
       <!-- ID-Separated Lyric Line List -->
       <div class="bg-[#161922] border border-[#2a3040] rounded-xl flex-1 flex flex-col min-h-[300px] max-h-[560px]">
-        <div class="px-3 py-2 border-b border-[#2a3040] flex items-center justify-between text-xs">
-          <span class="font-semibold text-white">ID별 가사 타임라인</span>
-          <span class="text-[11px] text-slate-400">클릭 시 이동 · Space 재생/정지 · [ / ] 반박 · Ctrl+Z 뒤로</span>
+        <div class="px-3 py-2 border-b border-[#2a3040] flex flex-wrap items-center justify-between gap-2 text-xs">
+          <div class="flex items-center gap-2">
+            <span class="font-semibold text-white">ID별 가사 타임라인</span>
+            <button id="btn-list-select-all" type="button" class="px-2 py-0.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-[11px] text-slate-200 cursor-pointer">전체 선택</button>
+            <button id="btn-list-select-one" type="button" class="px-2 py-0.5 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-[11px] text-slate-400 cursor-pointer">단일 선택</button>
+          </div>
+          <span class="text-[11px] text-slate-400">Ctrl+클릭 다중 · Space 재생 · [ / ] 반박 · Ctrl+Z 뒤로</span>
         </div>
         <div id="lyric-list" class="isolated-panel relative flex-1 overflow-y-auto divide-y divide-[#222735]"></div>
       </div>
@@ -404,13 +442,29 @@
     const SCROLL_DURATION_SEC = 0.28;
     const ITEM_HEIGHT_1080 = 210;
     const MAX_HISTORY = 60;
+    const TRACK_SLUG = new URLSearchParams(window.location.search).get("track") || "";
+
+    function apiUrl(path) {
+      return TRACK_SLUG ? `${path}?track=${encodeURIComponent(TRACK_SLUG)}` : path;
+    }
+
+    function mediaUrl(rel) {
+      const cleanRel = String(rel || "").replace(/^\/+/, "");
+      return TRACK_SLUG
+        ? `/media/${encodeURIComponent(TRACK_SLUG)}/${cleanRel}`
+        : `/media/${cleanRel}`;
+    }
 
     const appState = {
+      trackSlug: TRACK_SLUG,
       score: null,
       timeline: null,
       spectrum: null,
       selectedLineId: 0,
+      selectedLineIds: new Set(),
+      lastClickedLineId: null,
       selectedWordIdx: 0,
+      tapBeats: [],
       pxPerBeat: 46,
       playing: false,
       currentTime: 0,
@@ -549,6 +603,7 @@
     function applySnapshot(snap) {
       appState.score = JSON.parse(snap.scoreJson);
       appState.selectedLineId = snap.selectedLineId;
+      appState.selectedLineIds = new Set([snap.selectedLineId]);
       appState.selectedWordIdx = snap.selectedWordIdx;
       appState.style = appState.score.meta?.style || snap.style || "minimal";
       appState.contentScale = Number(appState.score.meta?.content_scale ?? snap.contentScale ?? 1.18);
@@ -635,6 +690,25 @@
       return appState.score.lines.find(l => l.id === appState.selectedLineId) || appState.score.lines[0];
     }
 
+    function getSelectedScoreLines() {
+      if (!appState.score) return [];
+      const picked = appState.score.lines.filter(l => appState.selectedLineIds.has(l.id));
+      if (picked.length) return picked;
+      const single = getSelectedScoreLine();
+      return single ? [single] : [];
+    }
+
+    function updateSelectionBadge() {
+      const count = getSelectedScoreLines().length;
+      const el = document.getElementById("lbl-sel-count");
+      if (el) {
+        el.textContent = count > 1 ? `선택 ${count}줄 (함께 이동 가능)` : `선택 1줄`;
+        el.className = count > 1
+          ? "px-2 py-0.5 rounded bg-sky-500/20 border border-sky-400/50 text-[11px] text-sky-200 font-mono font-semibold"
+          : "px-2 py-0.5 rounded bg-[#1c202b] border border-[#2a3040] text-[11px] text-rose-200 font-mono";
+      }
+    }
+
     function lineStartBeatTotal(ln) {
       const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
       return (ln.bar - 1) * bpb + (ln.beat - 1.0);
@@ -717,14 +791,14 @@
               <div style="display:flex; flex-direction:column; align-items:${isEditorial ? "flex-start" : "center"}; text-align:${isEditorial ? "left" : "center"}; justify-content:center; gap:${isEditorial ? 24 : 0}px;">
                 ${isEditorial ? `
                   <div style="display:flex; align-items:center; gap:20px; width:100%;">
-                    <img src="/media/cover.jpg" style="width:${coverSize}px; height:${coverSize}px; border-radius:10px; object-fit:cover; border:1px solid rgba(255,255,255,0.12); box-shadow:0 18px 40px rgba(0,0,0,0.65); flex-shrink:0;" />
+                    <img src="${mediaUrl("cover.jpg")}" style="width:${coverSize}px; height:${coverSize}px; border-radius:10px; object-fit:cover; border:1px solid rgba(255,255,255,0.12); box-shadow:0 18px 40px rgba(0,0,0,0.65); flex-shrink:0;" />
                     <div style="min-width:0;">
                       <div class="font-lyric-serif" style="font-size:28px; font-weight:700; letter-spacing:0.02em; color:#f5f1eb; line-height:1.15;">${escapeHtml(meta.title)}</div>
                       <div style="font-size:18px; color:#9f9690; margin-top:6px;">${escapeHtml(meta.artist)}</div>
                     </div>
                   </div>
                 ` : `
-                  <img src="/media/cover.jpg" style="width:${coverSize}px; height:${coverSize}px; border-radius:${isClassic ? 4 : 14}px; object-fit:cover; border:${isClassic ? `1px solid ${accent}44` : "1px solid rgba(255,255,255,0.12)"}; box-shadow:0 24px 60px rgba(0,0,0,0.7);" />
+                  <img src="${mediaUrl("cover.jpg")}" style="width:${coverSize}px; height:${coverSize}px; border-radius:${isClassic ? 4 : 14}px; object-fit:cover; border:${isClassic ? `1px solid ${accent}44` : "1px solid rgba(255,255,255,0.12)"}; box-shadow:0 24px 60px rgba(0,0,0,0.7);" />
                   <div class="font-lyric-serif" style="font-size:${isClassic ? 32 : 30}px; font-weight:700; letter-spacing:${isClassic ? "0.1em" : "0.02em"}; color:#f5f1eb; margin-top:24px;">${escapeHtml(meta.title)}</div>
                   ${isMinimal ? `<div style="font-size:19px; color:#a59c96; margin-top:6px;">${escapeHtml(meta.artist)}</div>` : ""}
                 `}
@@ -1020,11 +1094,24 @@
         const startBeats = lineStartBeatTotal(ln);
         const x = startBeats * pxPerBeat;
         const w = Math.max(22, ln.duration_beats * pxPerBeat - 2);
-        const selected = ln.id === appState.selectedLineId;
+        const isPrimary = ln.id === appState.selectedLineId;
+        const isMulti = !isPrimary && appState.selectedLineIds.has(ln.id);
         const whole = Boolean(ln.whole_line);
+        let clsColor = "";
+        if (isPrimary) {
+          clsColor = whole
+            ? "bg-amber-500/25 border border-amber-400 text-white z-20 shadow-lg"
+            : "bg-rose-500/30 border border-rose-400 text-white z-20 shadow-lg";
+        } else if (isMulti) {
+          clsColor = "bg-sky-500/25 border border-sky-400 text-white z-20 shadow";
+        } else {
+          clsColor = whole
+            ? "bg-amber-500/10 hover:bg-amber-500/20 border border-amber-400/50 text-amber-100 z-10"
+            : "bg-[#1f2534] hover:bg-[#272f42] border border-[#364059] text-slate-200 z-10";
+        }
         blocksHtml += `
           <div data-score-id="${ln.id}"
-               class="score-block-tick ${whole ? "whole-line-block" : ""} absolute top-3 bottom-3 rounded cursor-grab select-none flex items-center px-2.5 overflow-hidden ${selected ? (whole ? "bg-amber-500/25 border border-amber-400 text-white z-20 shadow-lg" : "bg-rose-500/30 border border-rose-400 text-white z-20 shadow-lg") : (whole ? "bg-amber-500/10 hover:bg-amber-500/20 border border-amber-400/50 text-amber-100 z-10" : "bg-[#1f2534] hover:bg-[#272f42] border border-[#364059] text-slate-200 z-10")}"
+               class="score-block-tick ${whole ? "whole-line-block" : ""} absolute top-3 bottom-3 rounded cursor-grab select-none flex items-center px-2.5 overflow-hidden ${clsColor}"
                style="left:${x}px; width:${w}px;">
             <span class="font-mono text-[10px] font-bold ${whole ? "text-amber-300" : "text-rose-300"} mr-1.5 shrink-0">#${String(ln.id).padStart(2, "0")}</span>
             ${whole ? `<span class="px-1 py-0.2 rounded bg-amber-400/20 text-amber-200 text-[9px] font-bold mr-1 shrink-0">전체</span>` : ""}
@@ -1150,9 +1237,13 @@
     function renderSelectedInspector() {
       const sel = getSelectedScoreLine();
       if (!sel) return;
-      document.getElementById("sel-badge-id").textContent = `#${String(sel.id).padStart(2, "0")}`;
+      const selCount = getSelectedScoreLines().length;
+      document.getElementById("sel-badge-id").textContent = selCount > 1
+        ? `#${String(sel.id).padStart(2, "0")} (+${selCount - 1})`
+        : `#${String(sel.id).padStart(2, "0")}`;
       document.getElementById("sel-badge-beat").textContent =
         `Bar ${sel.bar} · Beat ${sel.beat.toFixed(1)} (${sel.duration_beats.toFixed(1)}박 · ${sel.start.toFixed(2)}s)`;
+      updateSelectionBadge();
 
       const btnWhole = document.getElementById("btn-toggle-whole");
       const whole = Boolean(sel.whole_line);
@@ -1170,14 +1261,20 @@
       const list = document.getElementById("lyric-list");
       const lines = appState.score?.lines || [];
       list.innerHTML = lines.map(ln => {
-        const isSel = ln.id === appState.selectedLineId;
+        const isPrimary = ln.id === appState.selectedLineId;
+        const isMulti = !isPrimary && appState.selectedLineIds.has(ln.id);
         const whole = Boolean(ln.whole_line);
+        const rowCls = isPrimary
+          ? "bg-rose-500/15 border-l-2 border-rose-400"
+          : isMulti
+            ? "bg-sky-500/15 border-l-2 border-sky-400"
+            : "hover:bg-[#1c202b] border-l-2 border-transparent";
         return `
           <button type="button" data-list-id="${ln.id}"
-            class="w-full text-left px-3 py-2 flex items-start justify-between gap-2 cursor-pointer transition-colors ${isSel ? "bg-rose-500/15 border-l-2 border-rose-400" : "hover:bg-[#1c202b] border-l-2 border-transparent"}">
+            class="w-full text-left px-3 py-2 flex items-start justify-between gap-2 cursor-pointer transition-colors ${rowCls}">
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 text-[11px] font-mono">
-                <span class="font-bold ${isSel ? "text-rose-300" : "text-slate-400"}">#${String(ln.id).padStart(2, "0")}</span>
+                <span class="font-bold ${isPrimary ? "text-rose-300" : isMulti ? "text-sky-300" : "text-slate-400"}">#${String(ln.id).padStart(2, "0")}</span>
                 <span class="text-sky-300">M${ln.bar} · ${ln.beat.toFixed(1)}박</span>
                 <span class="text-slate-500">(${ln.duration_beats.toFixed(1)}박)</span>
                 ${whole ? `<span class="px-1.5 py-0 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-sans font-semibold">한줄전체</span>` : ""}
@@ -1200,8 +1297,39 @@
       updateVideoPreviewFrame();
     }
 
-    function selectLine(id, seekAudio = false) {
-      appState.selectedLineId = id;
+    function selectLine(id, seekAudio = false, opts = {}) {
+      const lines = appState.score?.lines || [];
+      const { toggle = false, range = false, scrollToView = true } = opts;
+
+      if (range && appState.lastClickedLineId != null) {
+        const idxA = lines.findIndex(l => l.id === appState.lastClickedLineId);
+        const idxB = lines.findIndex(l => l.id === id);
+        if (idxA !== -1 && idxB !== -1) {
+          const lo = Math.min(idxA, idxB);
+          const hi = Math.max(idxA, idxB);
+          if (!toggle) appState.selectedLineIds.clear();
+          for (let i = lo; i <= hi; i++) appState.selectedLineIds.add(lines[i].id);
+        }
+        appState.selectedLineId = id;
+      } else if (toggle) {
+        if (appState.selectedLineIds.has(id)) {
+          if (appState.selectedLineIds.size > 1) {
+            appState.selectedLineIds.delete(id);
+            if (appState.selectedLineId === id) {
+              appState.selectedLineId = Array.from(appState.selectedLineIds)[0];
+            }
+          }
+        } else {
+          appState.selectedLineIds.add(id);
+          appState.selectedLineId = id;
+        }
+        appState.lastClickedLineId = id;
+      } else {
+        appState.selectedLineIds = new Set([id]);
+        appState.selectedLineId = id;
+        appState.lastClickedLineId = id;
+      }
+
       appState.selectedWordIdx = 0;
       const sel = getSelectedScoreLine();
       if (sel && seekAudio) {
@@ -1217,25 +1345,40 @@
       renderLyricList();
       updateVideoPreviewFrame();
 
-      const listEl = document.getElementById("lyric-list");
-      const activeBtn = listEl ? listEl.querySelector(`[data-list-id="${id}"]`) : null;
-      if (listEl && activeBtn) {
-        const itemTop = activeBtn.offsetTop;
-        const itemBottom = itemTop + activeBtn.offsetHeight;
-        if (itemTop < listEl.scrollTop) {
-          listEl.scrollTop = itemTop;
-        } else if (itemBottom > listEl.scrollTop + listEl.clientHeight) {
-          listEl.scrollTop = itemBottom - listEl.clientHeight;
+      if (scrollToView) {
+        const listEl = document.getElementById("lyric-list");
+        const activeBtn = listEl ? listEl.querySelector(`[data-list-id="${appState.selectedLineId}"]`) : null;
+        if (listEl && activeBtn) {
+          const itemTop = activeBtn.offsetTop;
+          const itemBottom = itemTop + activeBtn.offsetHeight;
+          if (itemTop < listEl.scrollTop) {
+            listEl.scrollTop = itemTop;
+          } else if (itemBottom > listEl.scrollTop + listEl.clientHeight) {
+            listEl.scrollTop = itemBottom - listEl.clientHeight;
+          }
+        }
+        const blockEl = document.querySelector(`[data-score-id="${appState.selectedLineId}"]`);
+        if (blockEl) {
+          const wrap = document.getElementById("score-scroll-wrap");
+          const left = blockEl.offsetLeft;
+          if (left < wrap.scrollLeft || left > wrap.scrollLeft + wrap.clientWidth - 100) {
+            wrap.scrollLeft = Math.max(0, left - wrap.clientWidth * 0.25);
+          }
         }
       }
-      const blockEl = document.querySelector(`[data-score-id="${id}"]`);
-      if (blockEl) {
-        const wrap = document.getElementById("score-scroll-wrap");
-        const left = blockEl.offsetLeft;
-        if (left < wrap.scrollLeft || left > wrap.scrollLeft + wrap.clientWidth - 100) {
-          wrap.scrollLeft = Math.max(0, left - wrap.clientWidth * 0.25);
-        }
+    }
+
+    function selectAllLines() {
+      const lines = appState.score?.lines || [];
+      if (!lines.length) return;
+      appState.selectedLineIds = new Set(lines.map(l => l.id));
+      if (!appState.selectedLineIds.has(appState.selectedLineId)) {
+        appState.selectedLineId = lines[0].id;
       }
+      renderSelectedInspector();
+      renderScoreLane();
+      renderLyricList();
+      setStatus(`가사 전체 ${lines.length}줄 선택됨 (드래그 또는 [ / ] 로 함께 이동, Esc 단일 선택)`);
     }
 
     function toggleLineWholeMode(lineId) {
@@ -1244,6 +1387,9 @@
       pushUndoSnapshot(captureSnapshot());
       target.whole_line = !target.whole_line;
       appState.selectedLineId = lineId;
+      if (!appState.selectedLineIds.has(lineId)) {
+        appState.selectedLineIds = new Set([lineId]);
+      }
       appState.dirty = true;
       recomputeTimelineFromScore();
       rebuildPreviewRows();
@@ -1256,19 +1402,27 @@
       if (!sel) return;
       pushUndoSnapshot(captureSnapshot());
       const ripple = document.getElementById("chk-ripple").checked;
+      const selectedGroup = getSelectedScoreLines();
 
       if (deltaBeats !== 0) {
-        const startIdx = appState.score.lines.findIndex(l => l.id === sel.id);
-        const targets = ripple ? appState.score.lines.slice(startIdx) : [sel];
+        let targets = selectedGroup;
+        if (selectedGroup.length === 1 && ripple) {
+          const startIdx = appState.score.lines.findIndex(l => l.id === sel.id);
+          targets = appState.score.lines.slice(startIdx);
+        }
+        const minOrig = Math.min(...targets.map(l => lineStartBeatTotal(l)));
+        const appliedDelta = Math.max(-minOrig, deltaBeats);
         for (const ln of targets) {
-          setLineStartFromTotalBeats(ln, lineStartBeatTotal(ln) + deltaBeats);
+          setLineStartFromTotalBeats(ln, lineStartBeatTotal(ln) + appliedDelta);
         }
       }
       if (deltaDur !== 0) {
-        sel.duration_beats = Math.max(0.5, Number((sel.duration_beats + deltaDur).toFixed(2)));
+        for (const ln of selectedGroup) {
+          ln.duration_beats = Math.max(0.5, Number((ln.duration_beats + deltaDur).toFixed(2)));
+        }
       }
       appState.dirty = true;
-      setStatus("수정됨 (저장 전)");
+      setStatus(selectedGroup.length > 1 ? `${selectedGroup.length}줄 함께 수정됨 (저장 전)` : "수정됨 (저장 전)");
       refreshAllViews(true);
     }
 
@@ -1323,14 +1477,39 @@
       const resizeEl = e.target.closest("[data-resize-id]");
       if (blockEl) {
         const id = Number(blockEl.dataset.scoreId);
-        selectLine(id, false);
+        const isToggle = e.ctrlKey || e.metaKey;
+        const isRange = e.shiftKey;
+        let narrowOnClick = false;
+
+        if (!resizeEl && !isToggle && !isRange && appState.selectedLineIds.has(id) && appState.selectedLineIds.size > 1) {
+          // Keep multi-selection intact for group dragging; narrow only if released without dragging
+          appState.selectedLineId = id;
+          narrowOnClick = true;
+          renderSelectedInspector();
+          renderScoreLane();
+          renderWordLane();
+          renderLyricList();
+        } else {
+          selectLine(id, false, { toggle: isToggle, range: isRange, scrollToView: false });
+        }
+
         const sel = getSelectedScoreLine();
+        const ripple = document.getElementById("chk-ripple").checked;
+        let moveTargets = getSelectedScoreLines();
+        if (moveTargets.length === 1 && ripple) {
+          const startIdx = appState.score.lines.findIndex(l => l.id === sel.id);
+          moveTargets = appState.score.lines.slice(startIdx);
+        }
+        const origStarts = moveTargets.map(ln => ({ ln, origBeats: lineStartBeatTotal(ln) }));
+
         dragState = {
           type: resizeEl ? "resize-line" : "move-line",
           id,
           startX: e.clientX,
           origBeats: lineStartBeatTotal(sel),
+          origStarts,
           origDur: sel.duration_beats,
+          narrowOnClick,
           preSnapshot: captureSnapshot(),
           changed: false,
         };
@@ -1421,12 +1600,16 @@
       const dx = e.clientX - dragState.startX;
 
       if (dragState.type === "move-line") {
-        const deltaBeats = Math.round((dx / appState.pxPerBeat) * 2) / 2;
-        const sel = getSelectedScoreLine();
-        if (!sel) return;
-        const target = Math.max(0, dragState.origBeats + deltaBeats);
-        if (Math.abs(target - lineStartBeatTotal(sel)) >= 0.25) {
-          setLineStartFromTotalBeats(sel, target);
+        const rawDelta = Math.round((dx / appState.pxPerBeat) * 2) / 2;
+        const targets = dragState.origStarts || [];
+        if (!targets.length) return;
+        const minOrig = Math.min(...targets.map(t => t.origBeats));
+        const clampedDelta = Math.max(-minOrig, rawDelta);
+        const anyMoved = targets.some(t => Math.abs((t.origBeats + clampedDelta) - lineStartBeatTotal(t.ln)) >= 0.25);
+        if (anyMoved) {
+          for (const t of targets) {
+            setLineStartFromTotalBeats(t.ln, t.origBeats + clampedDelta);
+          }
           dragState.changed = true;
           appState.dirty = true;
           refreshAllViews(true);
@@ -1510,17 +1693,23 @@
       if (dragState) {
         if (dragState.changed && dragState.preSnapshot) {
           pushUndoSnapshot(dragState.preSnapshot);
-          setStatus("수정됨 (저장 전)");
+          const cnt = (dragState.origStarts || []).length;
+          setStatus(cnt > 1 && dragState.type === "move-line" ? `${cnt}줄 이동됨 (저장 전)` : "수정됨 (저장 전)");
+        } else if (!dragState.changed && dragState.narrowOnClick) {
+          selectLine(dragState.id, false, { scrollToView: false });
         }
         dragState = null;
       }
     });
 
-    // Click lyric list or preview line to select + seek
+    // Click lyric list or preview line to select + seek (supports Ctrl/Shift multi-select)
     document.getElementById("lyric-list").addEventListener("click", (e) => {
       const btn = e.target.closest("[data-list-id]");
       if (!btn) return;
-      selectLine(Number(btn.dataset.listId), true);
+      const id = Number(btn.dataset.listId);
+      const isToggle = e.ctrlKey || e.metaKey;
+      const isRange = e.shiftKey;
+      selectLine(id, !(isToggle || isRange), { toggle: isToggle, range: isRange, scrollToView: false });
     });
 
     stageContent.addEventListener("click", (e) => {
@@ -1540,7 +1729,7 @@
       const prevSnap = captureSnapshot();
       setStatus("알고리즘 박자로 초기화 중...");
       try {
-        const res = await fetch("/api/reset_score", {
+        const res = await fetch(apiUrl("/api/reset_score"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({}),
@@ -1625,7 +1814,7 @@
     document.getElementById("sel-audio-src").addEventListener("change", (e) => {
       const wasPlaying = !audioEl.paused;
       const t = audioEl.currentTime;
-      audioEl.src = `/media/${e.target.value}`;
+      audioEl.src = mediaUrl(e.target.value);
       audioEl.currentTime = t;
       audioEl.playbackRate = Number(document.getElementById("sel-speed").value);
       if (wasPlaying) audioEl.play();
@@ -1645,17 +1834,178 @@
       updateVideoPreviewFrame();
     });
 
-    document.getElementById("inp-bpm").addEventListener("change", (e) => {
-      pushUndoSnapshot(captureSnapshot());
-      appState.score.grid.bpm = Number(e.target.value) || 120;
+    async function requantizeWithServer(bpm, t0) {
+      setStatus(`새 박자(BPM ${bpm}, t0=${t0}s) 기준으로 보컬 가사 재배치 중...`);
+      try {
+        const res = await fetch(apiUrl("/api/requantize"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            track: appState.trackSlug || undefined,
+            bpm,
+            t0,
+            score: appState.score,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setStatus(data.error || "가사 재배치 실패", true);
+          return false;
+        }
+        appState.score = data.score;
+        appState.timeline = data.timeline;
+        document.getElementById("inp-bpm").value = appState.score.grid.bpm;
+        document.getElementById("inp-t0").value = appState.score.grid.t0;
+        appState.dirty = false;
+        appState.lastMetronomeBeat = -999;
+        refreshAllViews(true);
+        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 적용 & 보컬 기준 가사 재배치 완료`);
+        return true;
+      } catch (err) {
+        setStatus(String(err), true);
+        return false;
+      }
+    }
+
+    function preserveLyricsOntoGrid(newBpm, newT0) {
+      const score = appState.score;
+      if (!score) return;
+      const oldBpm = Number(score.grid.bpm) || 120;
+      const oldT0 = Number(score.grid.t0) || 0;
+      const bpb = (score.grid.time_signature && score.grid.time_signature[0]) || 4;
+      const oldBeatSec = 60.0 / oldBpm;
+      const newBeatSec = 60.0 / newBpm;
+
+      for (const ln of score.lines) {
+        const oldTotalBeats = (ln.bar - 1) * bpb + (ln.beat - 1.0);
+        const absStart = oldT0 + oldTotalBeats * oldBeatSec;
+        const absEnd = oldT0 + (oldTotalBeats + Number(ln.duration_beats || 1)) * oldBeatSec;
+
+        const newStartBeats = Math.max(0, Math.round(((absStart - newT0) / newBeatSec) * 2) / 2);
+        const newDurBeats = Math.max(0.5, Math.round(((absEnd - absStart) / newBeatSec) * 2) / 2);
+        setLineStartFromTotalBeats(ln, newStartBeats);
+        ln.duration_beats = Number(newDurBeats.toFixed(2));
+
+        if (Array.isArray(ln.words) && ln.words.length) {
+          const lineNewStartSec = newT0 + newStartBeats * newBeatSec;
+          for (const w of ln.words) {
+            const wAbsStart = absStart + Number(w.rel_beat || 0) * oldBeatSec;
+            const wAbsEnd = wAbsStart + Number(w.duration_beats || 0.25) * oldBeatSec;
+            const newRel = Math.max(0, Math.min(ln.duration_beats - 0.25, Math.round(((wAbsStart - lineNewStartSec) / newBeatSec) * 4) / 4));
+            const maxDur = Math.max(0.25, ln.duration_beats - newRel);
+            const newWDur = Math.max(0.25, Math.min(maxDur, Math.round(((wAbsEnd - wAbsStart) / newBeatSec) * 4) / 4));
+            w.rel_beat = Number(newRel.toFixed(2));
+            w.duration_beats = Number(newWDur.toFixed(2));
+          }
+        }
+      }
+      score.grid.bpm = Number(newBpm.toFixed(2));
+      score.grid.t0 = Number(newT0.toFixed(4));
+      document.getElementById("inp-bpm").value = score.grid.bpm;
+      document.getElementById("inp-t0").value = score.grid.t0;
       appState.dirty = true;
+      appState.lastMetronomeBeat = -999;
       refreshAllViews(true);
+    }
+
+    async function applyBeatGridChange(newBpm, newT0) {
+      const preSnap = captureSnapshot();
+      const mode = document.getElementById("sel-realign-mode").value;
+      if (mode === "vocals") {
+        const ok = await requantizeWithServer(newBpm, newT0);
+        if (ok) pushUndoSnapshot(preSnap);
+      } else if (mode === "preserve") {
+        pushUndoSnapshot(preSnap);
+        preserveLyricsOntoGrid(newBpm, newT0);
+        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 적용 (현재 가사 위치 유지 스냅)`);
+      } else {
+        pushUndoSnapshot(preSnap);
+        appState.score.grid.bpm = Number(newBpm.toFixed(2));
+        appState.score.grid.t0 = Number(newT0.toFixed(4));
+        document.getElementById("inp-bpm").value = appState.score.grid.bpm;
+        document.getElementById("inp-t0").value = appState.score.grid.t0;
+        appState.dirty = true;
+        appState.lastMetronomeBeat = -999;
+        refreshAllViews(true);
+        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 그리드만 이동됨`);
+      }
+    }
+
+    function updateTapButtonLabel() {
+      const btn = document.getElementById("btn-tap-beat");
+      if (btn) btn.textContent = `4박 탭 (B · ${appState.tapBeats.length}/4)`;
+    }
+
+    async function handleFourBeatTap() {
+      const nowWall = performance.now() / 1000;
+      const last = appState.tapBeats[appState.tapBeats.length - 1];
+      if (last && (nowWall - last.wall) > 2.5) {
+        appState.tapBeats = [];
+      }
+      appState.tapBeats.push({
+        wall: nowWall,
+        audio: audioEl.currentTime,
+        playing: !audioEl.paused,
+      });
+      updateTapButtonLabel();
+
+      if (appState.tapBeats.length < 4) {
+        setStatus(`4박 탭 ${appState.tapBeats.length}/4 (음악 박자에 맞춰 계속 눌러주세요)`);
+        return;
+      }
+
+      const taps = appState.tapBeats.slice(-4);
+      appState.tapBeats = [];
+      updateTapButtonLabel();
+
+      const allPlaying = taps.every(t => t.playing) && taps[3].audio > taps[0].audio + 0.3;
+      const span = allPlaying ? (taps[3].audio - taps[0].audio) : (taps[3].wall - taps[0].wall);
+      const beatSec = span / 3.0;
+      let newBpm = Math.max(40, Math.min(240, 60.0 / Math.max(0.2, beatSec)));
+      const snappedHalf = Math.round(newBpm * 2) / 2;
+      if (Math.abs(newBpm - snappedHalf) <= 0.2) newBpm = snappedHalf;
+      else newBpm = Math.round(newBpm * 10) / 10;
+
+      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
+      const barSec = bpb * (60.0 / newBpm);
+      let newT0 = Number(appState.score.grid.t0) || 0;
+      if (allPlaying) {
+        // Fold tap 1 (Beat 1) back by full bars into [0, barSec)
+        newT0 = ((taps[0].audio % barSec) + barSec) % barSec;
+      }
+      await applyBeatGridChange(newBpm, newT0);
+    }
+
+    document.getElementById("btn-tap-beat").addEventListener("click", handleFourBeatTap);
+    document.getElementById("btn-set-downbeat").addEventListener("click", async () => {
+      const bpm = Number(appState.score.grid.bpm) || 120;
+      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
+      const barSec = bpb * (60.0 / bpm);
+      const t = audioEl.currentTime || 0;
+      const newT0 = ((t % barSec) + barSec) % barSec;
+      await applyBeatGridChange(bpm, newT0);
     });
-    document.getElementById("inp-t0").addEventListener("change", (e) => {
+    document.getElementById("btn-requantize-now").addEventListener("click", async () => {
       pushUndoSnapshot(captureSnapshot());
-      appState.score.grid.t0 = Number(e.target.value) || 0;
-      appState.dirty = true;
-      refreshAllViews(true);
+      const bpm = Number(document.getElementById("inp-bpm").value) || appState.score.grid.bpm;
+      const t0 = Number(document.getElementById("inp-t0").value) ?? appState.score.grid.t0;
+      await requantizeWithServer(bpm, t0);
+    });
+
+    document.getElementById("inp-bpm").addEventListener("change", async (e) => {
+      const nextBpm = Number(e.target.value) || 120;
+      await applyBeatGridChange(nextBpm, Number(appState.score.grid.t0) || 0);
+    });
+    document.getElementById("inp-t0").addEventListener("change", async (e) => {
+      const nextT0 = Number(e.target.value) || 0;
+      await applyBeatGridChange(Number(appState.score.grid.bpm) || 120, nextT0);
+    });
+
+    document.getElementById("btn-select-all").addEventListener("click", selectAllLines);
+    document.getElementById("btn-list-select-all").addEventListener("click", selectAllLines);
+    document.getElementById("btn-list-select-one").addEventListener("click", () => {
+      selectLine(appState.selectedLineId, false, { scrollToView: false });
+      setStatus("단일 선택으로 전환됨");
     });
 
     document.getElementById("btn-zoom-in").addEventListener("click", () => {
@@ -1679,9 +2029,15 @@
       const bpm = Number(appState.score.grid.bpm) || 120;
       const t0 = Number(appState.score.grid.t0) || 0;
       const targetBeats = Math.max(0, Math.round(((appState.currentTime - t0) / (60.0 / bpm)) * 2) / 2);
-      setLineStartFromTotalBeats(sel, targetBeats);
+      const delta = targetBeats - lineStartBeatTotal(sel);
+      const targets = getSelectedScoreLines();
+      const minOrig = Math.min(...targets.map(l => lineStartBeatTotal(l)));
+      const appliedDelta = Math.max(-minOrig, delta);
+      for (const ln of targets) {
+        setLineStartFromTotalBeats(ln, lineStartBeatTotal(ln) + appliedDelta);
+      }
       appState.dirty = true;
-      setStatus("현재 재생 위치로 0.5박 스냅됨");
+      setStatus(targets.length > 1 ? `${targets.length}줄 기준 현 위치 0.5박 스냅됨` : "현재 재생 위치로 0.5박 스냅됨");
       refreshAllViews(true);
     });
 
@@ -1735,10 +2091,11 @@
     // Save & Render APIs
     async function saveScore() {
       setStatus("저장 중...");
-      const res = await fetch("/api/save", {
+      const res = await fetch(apiUrl("/api/save"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          track: appState.trackSlug || undefined,
           score: appState.score,
           style: appState.style,
           content_scale: appState.contentScale,
@@ -1755,16 +2112,48 @@
     }
 
     document.getElementById("btn-save").addEventListener("click", saveScore);
+    document.getElementById("btn-approve").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-approve");
+      btn.disabled = true;
+      try {
+        const saved = await saveScore();
+        if (!saved) return;
+        const slug = appState.trackSlug;
+        if (!slug) {
+          setStatus("트랙 슬러그를 찾을 수 없습니다", true);
+          return;
+        }
+        const res = await fetch(`/api/tracks/${encodeURIComponent(slug)}/approve`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            style: appState.style,
+            upload_to_youtube: true,
+          }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setStatus(data.error || "대기열 추가 실패", true);
+          return;
+        }
+        setStatus("검수 완료! 백그라운드 렌더링/업로드 대기열에 추가되었습니다. (← 대시보드에서 진행 확인)");
+      } catch (err) {
+        setStatus(String(err), true);
+      } finally {
+        btn.disabled = false;
+      }
+    });
     document.getElementById("btn-render").addEventListener("click", async () => {
       const btn = document.getElementById("btn-render");
       btn.disabled = true;
       btn.textContent = "MP4 렌더링 중...";
       setStatus("저장 후 Remotion + FFmpeg 렌더링 중 (수 분 소요 가능)...");
       try {
-        const res = await fetch("/api/render", {
+        const res = await fetch(apiUrl("/api/render"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
+            track: appState.trackSlug || undefined,
             score: appState.score,
             style: appState.style,
             content_scale: appState.contentScale,
@@ -1800,6 +2189,11 @@
         performRedo();
         return;
       }
+      if (isCtrl && e.key.toLowerCase() === "a" && !inField) {
+        e.preventDefault();
+        selectAllLines();
+        return;
+      }
       if (inField) return;
       if (e.code === "Space") {
         e.preventDefault();
@@ -1813,6 +2207,14 @@
       } else if (e.key.toLowerCase() === "t") {
         e.preventDefault();
         document.getElementById("btn-snap-playhead").click();
+      } else if (e.key.toLowerCase() === "b") {
+        e.preventDefault();
+        handleFourBeatTap();
+      } else if (e.key === "Escape") {
+        if (appState.selectedLineIds.size > 1) {
+          selectLine(appState.selectedLineId, false, { scrollToView: false });
+          setStatus("다중 선택 해제됨");
+        }
       }
     });
 
@@ -1829,11 +2231,15 @@
     }
 
     async function init() {
-      const [stateRes, specRes] = await Promise.all([
-        fetch("/api/state"),
-        fetch("/media/spectrum.json"),
-      ]);
+      const stateRes = await fetch(apiUrl("/api/state"));
       const data = await stateRes.json();
+      if (!stateRes.ok || data.error) {
+        setStatus(data.error || "트랙 로드 실패", true);
+        return;
+      }
+      appState.trackSlug = data.track_name || appState.trackSlug;
+      document.getElementById("stage-bg-img").src = mediaUrl("bg_blur.png");
+      const specRes = await fetch(mediaUrl("spectrum.json"));
       appState.score = data.score;
       appState.timeline = data.timeline;
       appState.spectrum = await specRes.json();
@@ -1849,7 +2255,7 @@
       lblContentScale.textContent = `${Math.round(appState.contentScale * 100)}%`;
       syncRangeFallbackProgress(rngContentScale);
 
-      audioEl.src = "/media/master_audio.m4a";
+      audioEl.src = mediaUrl("master_audio.m4a");
       audioEl.addEventListener("loadedmetadata", () => {
         scrubber.max = audioEl.duration || data.score.meta?.duration || 260;
         syncRangeFallbackProgress(scrubber);
@@ -1860,7 +2266,9 @@
       buildVideoPreviewSkeleton();
       refreshAllViews(true);
       if (appState.score.lines.length > 1) {
-        selectLine(1, false);
+        selectLine(appState.score.lines[1].id, false);
+      } else if (appState.score.lines.length === 1) {
+        selectLine(appState.score.lines[0].id, false);
       }
       updateHistoryButtons();
       setStatus("준비 완료 (우클릭 드래그 이동 · 블록 우클릭 한줄전체 · Ctrl+Z 뒤로)");

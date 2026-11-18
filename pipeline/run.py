@@ -15,9 +15,12 @@ from step2_align import run_align
 from step3_spectrum import extract_spectrum
 from step4_score import ensure_score_file
 from step5_enrich import (
+    DEFAULT_ACP_MODEL,
     apply_annotations_to_work_dir,
+    enrich_with_agy_acp,
     enrich_with_gemini_api,
     export_llm_prompt_bundle,
+    is_agy_acp_available,
     resolve_gemini_api_key,
 )
 from studio_server import serve_forever
@@ -82,8 +85,20 @@ def cmd_enrich(args: argparse.Namespace) -> None:
         print(f"Merged {res['updated_lines']} annotated lines into {work_dir / 'score.json'} & timeline.json")
         return
 
+    backend = args.backend
     api_key = resolve_gemini_api_key(args.api_key)
-    if api_key:
+
+    if backend == "acp" or (backend == "auto" and is_agy_acp_available() and not args.api_key):
+        print(f"[ACP] Running scoped `agy acp` ({args.acp_model}) inside {work_dir}...")
+        res = enrich_with_agy_acp(
+            work_dir,
+            model_id=args.acp_model,
+            session_timeout_sec=args.timeout,
+        )
+        print(f"Enriched {res['updated_lines']} lines via agy acp ({args.acp_model}) and closed session.")
+        return
+
+    if api_key and backend in {"auto", "gemini"}:
         print(f"[LLM] Calling Gemini ({args.model}) for pronunciation, translation & learning notes...")
         res = enrich_with_gemini_api(work_dir, api_key=api_key, model=args.model)
         print(f"Enriched {res['updated_lines']} lines into {work_dir / 'score.json'} & timeline.json")
@@ -91,7 +106,7 @@ def cmd_enrich(args: argparse.Namespace) -> None:
 
     prompt_path = export_llm_prompt_bundle(work_dir)
     print(
-        f"No --from-json or GEMINI_API_KEY provided.\n"
+        f"No --from-json, agy CLI, or GEMINI_API_KEY available.\n"
         f"Exported Agent prompt bundle to: {prompt_path}\n"
         f"Ask your AI agent to fill the annotations JSON, then run:\n"
         f"  uv run python pipeline/run.py enrich {work_dir.name} --from-json <annotations.json>"
@@ -149,6 +164,9 @@ def cmd_auto(args: argparse.Namespace) -> None:
         ann = _load_json_file(Path(args.annotations).resolve())
         res = apply_annotations_to_work_dir(work_dir, ann)
         print(f"      Applied {res['updated_lines']} annotated lines from '{args.annotations}'")
+    elif is_agy_acp_available() and not args.api_key:
+        res = enrich_with_agy_acp(work_dir, model_id=args.acp_model)
+        print(f"      Enriched {res['updated_lines']} lines via scoped agy acp ({args.acp_model})")
     elif api_key:
         res = enrich_with_gemini_api(work_dir, api_key=api_key, model=args.model)
         print(f"      Enriched {res['updated_lines']} lines via Gemini ({args.model})")
@@ -185,6 +203,19 @@ def cmd_edit(args: argparse.Namespace) -> None:
         port=args.port,
         style=args.style,
         output=output_path,
+    )
+
+
+def cmd_studio(args: argparse.Namespace) -> None:
+    url = f"http://{args.host}:{args.port}"
+    if not args.no_browser:
+        threading.Timer(1.0, lambda: webbrowser.open(url)).start()
+    serve_forever(
+        work_dir=None,
+        host=args.host,
+        port=args.port,
+        style=args.style,
+        output=None,
     )
 
 
@@ -234,6 +265,13 @@ def main() -> None:
     p_edit.add_argument("--output", help="Default output .mp4 path when rendering from studio")
     p_edit.set_defaults(func=cmd_edit)
 
+    p_studio = sub.add_parser("studio", help="Launch Multi-Track Automation Dashboard & Beat Score Studio")
+    p_studio.add_argument("--host", default="127.0.0.1")
+    p_studio.add_argument("--port", type=int, default=8765)
+    p_studio.add_argument("--style", choices=list(STYLE_TO_COMP), default="minimal", help="Default template style")
+    p_studio.add_argument("--no-browser", action="store_true", help="Do not auto-open browser tab")
+    p_studio.set_defaults(func=cmd_studio)
+
     p_ren = sub.add_parser("render", help="Render timeline.json via Remotion and mux master audio")
     p_ren.add_argument("target", help="Work directory path (work/<slug>) or track slug")
     p_ren.add_argument("--style", choices=list(STYLE_TO_COMP), help="Override template style")
@@ -243,17 +281,21 @@ def main() -> None:
     p_ren.add_argument("--keep-silent", action="store_true", help="Keep intermediate silent MP4")
     p_ren.set_defaults(func=cmd_render)
 
-    p_enr = sub.add_parser("enrich", help="Merge LLM annotations JSON or auto-generate via Gemini API")
+    p_enr = sub.add_parser("enrich", help="Merge LLM annotations JSON or auto-generate via agy acp / Gemini API")
     p_enr.add_argument("target", help="Work directory path (work/<slug>) or track slug")
     p_enr.add_argument("--from-json", help="Path to annotations JSON produced by AI agent")
+    p_enr.add_argument("--backend", choices=["auto", "acp", "gemini"], default="auto", help="Enrichment backend")
+    p_enr.add_argument("--acp-model", default=DEFAULT_ACP_MODEL, help="Model ID for agy acp")
+    p_enr.add_argument("--timeout", type=float, default=240.0, help="Hard timeout (seconds) before terminating agy acp session")
     p_enr.add_argument("--api-key", help="Gemini API key (or set GEMINI_API_KEY env var)")
-    p_enr.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
+    p_enr.add_argument("--model", default="gemini-2.5-flash", help="Gemini API model name")
     p_enr.set_defaults(func=cmd_enrich)
 
     p_auto = sub.add_parser("auto", help="End-to-end: prepare + vocal beat score + LLM enrich + launch Studio")
     p_auto.add_argument("input", help="Path to audio (.mp3/.flac/.wav) or video (.mp4/.mkv)")
     p_auto.add_argument("--lyrics", help="Optional path to plain .txt or timed .lrc lyrics")
     p_auto.add_argument("--annotations", help="Optional pre-generated LLM annotations JSON path")
+    p_auto.add_argument("--acp-model", default=DEFAULT_ACP_MODEL, help="Model ID for agy acp")
     p_auto.add_argument("--api-key", help="Optional Gemini API key (or set GEMINI_API_KEY env var)")
     p_auto.add_argument("--model", default="gemini-2.5-flash", help="Gemini model name")
     p_auto.add_argument("--style", choices=list(STYLE_TO_COMP), default="minimal")

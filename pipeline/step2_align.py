@@ -92,8 +92,35 @@ def _fetch_lyrics_syncedlyrics(artist: str, title: str) -> str | None:
         import syncedlyrics
     except ImportError:
         return None
-    query = f"{artist} {title}".strip() if artist != "Unknown Artist" else title
-    return syncedlyrics.search(query)
+
+    clean_title = re.sub(r"\s*[\(\[](?:feat\.?|ft\.?|with|remaster(?:ed)?|from)[^\)\]]*[\)\]]", "", title, flags=re.I).strip()
+    clean_title = re.sub(r"\s+-\s+(?:remaster(?:ed)?|radio edit|single version).*$", "", clean_title, flags=re.I).strip()
+    primary_artist = artist.split(",")[0].strip() if "," in artist else artist
+
+    candidates: list[str] = []
+    if artist and artist != "Unknown Artist":
+        candidates.append(f"{artist} {title}".strip())
+        if clean_title and clean_title != title:
+            candidates.append(f"{primary_artist} {clean_title}".strip())
+        if primary_artist != artist:
+            candidates.append(f"{primary_artist} {title}".strip())
+    if clean_title:
+        candidates.append(clean_title)
+    elif title:
+        candidates.append(title)
+
+    seen: set[str] = set()
+    for query in candidates:
+        if not query or query in seen:
+            continue
+        seen.add(query)
+        try:
+            res = syncedlyrics.search(query)
+            if res:
+                return res
+        except Exception:
+            continue
+    return None
 
 
 def _detect_chunk_language(lines: list[dict[str, Any]], default_lang: str) -> str:

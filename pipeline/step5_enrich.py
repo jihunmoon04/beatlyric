@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
 from typing import Any
 
+from acp_client import DEFAULT_ACP_MODEL, ScopedAgyAcpSession, find_agy_executable
 from common import read_json, write_json
+from env_utils import get_env
 from step4_score import compile_score_to_timeline, ensure_score_file
 
 
@@ -74,14 +77,30 @@ def apply_annotations_to_work_dir(
 
 def _extract_json_payload(raw_text: str) -> Any:
     text = raw_text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        text = "\n".join(lines).strip()
-    return json.loads(text)
+    fence = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text, flags=re.IGNORECASE)
+    if fence:
+        text = fence.group(1).strip()
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        start = text.find("[")
+        end = text.rfind("]")
+        if start != -1 and end > start:
+            return json.loads(text[start : end + 1])
+        raise
+
+
+def _build_enrichment_prompt(song_label: str, lang: str, payload_lines: list[dict[str, Any]]) -> str:
+    return (
+        f"You are creating Korean language-learning study notes for the song '{song_label}' (primary language: {lang}).\n"
+        "Do NOT inspect external files or run shell commands. Return ONLY a raw JSON array (no markdown prose).\n"
+        "For EVERY item in the input array, keep the exact same integer `id` and return a JSON array of objects with:\n"
+        "- `id`: integer\n"
+        "- `pronunciation`: natural Korean Hangul phonetic transcription matching how it is sung (empty string \"\" for instrumental markers like ♪ ...)\n"
+        "- `translation`: natural idiomatic Korean translation (short Korean label for instrumental markers)\n"
+        "- `comment`: either `null` OR an object `{ \"tag\": \"IDIOM\"|\"SLANG\"|\"CULTURE\"|\"GRAMMAR\", \"phrase\": \"short key expression\", \"meaning\": \"concise Korean meaning\", \"tip\": \"one-sentence Korean nuance/usage tip\" }`. Provide helpful `comment` objects on roughly 30-45% of notable lines and `null` on repetitive chorus lines or instrumentals.\n\n"
+        f"Input lines JSON:\n{json.dumps(payload_lines, ensure_ascii=False)}"
+    )
 
 
 def enrich_with_gemini_api(
@@ -109,15 +128,7 @@ def enrich_with_gemini_api(
             {"id": ln["id"], "original": ln["original"]}
             for ln in batch
         ]
-        prompt = (
-            f"You are creating Korean language-learning study notes for the song '{song_label}' (primary language: {lang}).\n"
-            "For EVERY item in the input array, keep the exact same integer `id` and return a JSON array of objects with:\n"
-            "- `id`: integer\n"
-            "- `pronunciation`: natural Korean Hangul phonetic transcription matching how it is sung (empty string \"\" for instrumental markers like ♪ ...)\n"
-            "- `translation`: natural idiomatic Korean translation (short Korean label for instrumental markers)\n"
-            "- `comment`: either `null` OR an object `{ \"tag\": \"IDIOM\"|\"SLANG\"|\"CULTURE\"|\"GRAMMAR\", \"phrase\": \"short key expression\", \"meaning\": \"concise Korean meaning\", \"tip\": \"one-sentence Korean nuance/usage tip\" }`. Provide helpful `comment` objects on roughly 30-45% of notable lines and `null` on repetitive chorus lines or instrumentals.\n\n"
-            f"Input lines JSON:\n{json.dumps(payload_lines, ensure_ascii=False)}"
-        )
+        prompt = _build_enrichment_prompt(song_label, lang, payload_lines)
         req_body = json.dumps({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},
@@ -140,7 +151,8 @@ def enrich_with_gemini_api(
         parsed = _extract_json_payload(text)
         if isinstance(parsed, dict):
             parsed = parsed.get("lines") or parsed.get("annotations") or []
-        collected.extend(parsed)
+        if isinstance(parsed, list):
+            collected.extend(parsed)
 
     return apply_annotations_to_work_dir(work_dir, collected)
 
@@ -172,5 +184,49 @@ def export_llm_prompt_bundle(work_dir: Path) -> Path:
     return out_path
 
 
+def enrich_with_agy_acp(
+    work_dir: Path,
+    model_id: str | None = None,
+    batch_size: int = 30,
+    session_timeout_sec: float = 240.0,
+) -> dict[str, Any]:
+    """Generate linguistic annotations via scoped `agy acp` inside `work_dir`."""
+    score = ensure_score_file(work_dir)
+    meta = score.get("meta", {})
+    lines = score.get("lines", [])
+    song_label = f"{meta.get('title', work_dir.name)} - {meta.get('artist', '')}".strip(" -")
+    lang = meta.get("language", "en")
+    chosen_model = model_id or get_env("AGY_ACP_MODEL", DEFAULT_ACP_MODEL) or DEFAULT_ACP_MODEL
+    timeout_val = float(get_env("AGY_ACP_TIMEOUT_SEC", str(session_timeout_sec)) or session_timeout_sec)
+
+    collected: list[dict[str, Any]] = []
+    with ScopedAgyAcpSession(
+        work_dir=work_dir,
+        model_id=chosen_model,
+        session_timeout_sec=timeout_val,
+        allow_work_dir_writes=False,
+    ) as session:
+        for start_idx in range(0, len(lines), batch_size):
+            batch = lines[start_idx : start_idx + batch_size]
+            payload_lines = [
+                {"id": ln["id"], "original": ln["original"]}
+                for ln in batch
+            ]
+            prompt = _build_enrichment_prompt(song_label, lang, payload_lines)
+            reply_text = session.prompt_text(prompt, timeout_sec=min(120.0, timeout_val))
+            parsed = _extract_json_payload(reply_text)
+            if isinstance(parsed, dict):
+                parsed = parsed.get("lines") or parsed.get("annotations") or []
+            if isinstance(parsed, list):
+                collected.extend(parsed)
+
+    write_json(work_dir / "annotations_acp.json", collected)
+    return apply_annotations_to_work_dir(work_dir, collected)
+
+
 def resolve_gemini_api_key(explicit_key: str | None = None) -> str | None:
-    return explicit_key or os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    return explicit_key or get_env("GEMINI_API_KEY") or get_env("GOOGLE_API_KEY") or None
+
+
+def is_agy_acp_available() -> bool:
+    return find_agy_executable() is not None
