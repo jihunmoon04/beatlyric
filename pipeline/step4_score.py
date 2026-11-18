@@ -2,13 +2,18 @@
 
 from __future__ import annotations
 
+import re
 import wave
+from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
 from common import read_json, write_json
+
+CONSONANT_LEAD_SEC = 0.085
+PAREN_GROUP_RE = re.compile(r"\(([^)]+)\)")
 
 
 def _read_mono_wav(wav_path: Path) -> tuple[np.ndarray, int]:
@@ -177,7 +182,9 @@ def _snap_line_start_beat_with_vocals(
     hop_sec: float,
 ) -> float:
     """Pick the best 0.5-beat line entry within [-1.5, +1.5] beats using vocal attack contrast."""
-    base_b = round(raw_start_b * 2.0) / 2.0
+    beat_sec = 60.0 / bpm
+    raw_lead_b = max(0.0, raw_start_b - CONSONANT_LEAD_SEC / beat_sec)
+    base_b = round(raw_lead_b * 2.0) / 2.0
     candidates = [
         base_b + off
         for off in (-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5)
@@ -186,7 +193,6 @@ def _snap_line_start_beat_with_vocals(
     if not candidates:
         return max(min_beat, base_b)
 
-    beat_sec = 60.0 / bpm
     pre_n = max(1, int(round(0.18 / hop_sec)))
     post_n = max(1, int(round(0.28 / hop_sec)))
     on_pre_n = max(1, int(round(0.06 / hop_sec)))
@@ -206,7 +212,7 @@ def _snap_line_start_beat_with_vocals(
         peak_onset = float(np.max(onset_w)) if len(onset_w) else 0.0
 
         attack = (post_rms - 0.55 * pre_rms) + 1.2 * peak_onset
-        prox_penalty = 0.38 * abs(cand_b - raw_start_b)
+        prox_penalty = 0.32 * abs(cand_b - raw_lead_b)
         in_bar = round((cand_b % beats_per_bar) * 2.0) / 2.0
         prior = 0.0
         if in_bar == 0.0:
@@ -222,6 +228,112 @@ def _snap_line_start_beat_with_vocals(
             best_b = cand_b
 
     return round(best_b, 2)
+
+
+def _should_use_whole_line(original: str) -> bool:
+    """Detect dual-voice lines mixing outside singing with long parenthetical narration."""
+    matches = PAREN_GROUP_RE.findall(original)
+    if not matches:
+        return False
+    outside = PAREN_GROUP_RE.sub("", original).strip()
+    if len(outside) < 3:
+        return False
+    for inner in matches:
+        tokens = [re.sub(r"[^\w]", "", tok.lower()) for tok in inner.split()]
+        tokens = [t for t in tokens if t]
+        if len(tokens) >= 4 and len(set(tokens)) >= 3:
+            return True
+    return False
+
+
+def _apply_repeated_line_consensus(score_lines: list[dict[str, Any]]) -> None:
+    """Regularize pathological word crowding across repeated lines (e.g., choruses) via median consensus."""
+    groups: dict[tuple[str, int], list[dict[str, Any]]] = defaultdict(list)
+    for ln in score_lines:
+        words = ln.get("words") or []
+        if ln.get("whole_line") or len(words) < 3:
+            continue
+        key = (re.sub(r"\s+", " ", str(ln.get("original", "")).strip().lower()), len(words))
+        groups[key].append(ln)
+
+    for (_key, n_words), items in groups.items():
+        if len(items) < 2:
+            continue
+        rel_fracs = []
+        dur_fracs = []
+        for ln in items:
+            dur_b = max(0.5, float(ln["duration_beats"]))
+            rel_fracs.append([float(w.get("rel_beat", 0.0)) / dur_b for w in ln["words"]])
+            dur_fracs.append([float(w.get("duration_beats", 0.25)) / dur_b for w in ln["words"]])
+
+        med_rel = np.median(np.array(rel_fracs), axis=0)
+        med_dur = np.median(np.array(dur_fracs), axis=0)
+
+        for idx, ln in enumerate(items):
+            max_dev = float(np.max(np.abs(np.array(rel_fracs[idx]) - med_rel)))
+            if max_dev > 0.14:
+                dur_b = max(0.5, float(ln["duration_beats"]))
+                for j, w in enumerate(ln["words"]):
+                    new_rel = round(float(med_rel[j]) * dur_b * 4.0) / 4.0
+                    new_dur = max(0.25, round(float(med_dur[j]) * dur_b * 4.0) / 4.0)
+                    w["rel_beat"] = round(max(0.0, min(dur_b - 0.25, new_rel)), 3)
+                    w["duration_beats"] = round(min(dur_b - w["rel_beat"], new_dur), 3)
+
+
+def enforce_score_integrity(score: dict[str, Any]) -> dict[str, Any]:
+    """Enforce zero line overlaps, close <=0.5b micro-gaps, separate colliding words, and bound word durations."""
+    grid = score.get("grid", {})
+    bpm = float(grid.get("bpm", 120.0))
+    ts = grid.get("time_signature", [4, 4])
+    t0 = float(grid.get("t0", 0.0))
+    beats_per_bar = float(ts[0])
+    beat_sec = 60.0 / bpm
+
+    lines = sorted(score.get("lines", []), key=lambda x: x["id"])
+
+    def _start_beats(ln: dict[str, Any]) -> float:
+        return (int(ln["bar"]) - 1) * beats_per_bar + (float(ln["beat"]) - 1.0)
+
+    # Line overlap / <=0.5b micro-gap pass
+    for i in range(len(lines) - 1):
+        cur = lines[i]
+        nxt = lines[i + 1]
+        cur_s = _start_beats(cur)
+        cur_d = max(0.5, float(cur["duration_beats"]))
+        nxt_s = _start_beats(nxt)
+        gap = round(nxt_s - (cur_s + cur_d), 2)
+        if gap < 0.0:
+            cur["duration_beats"] = round(max(0.5, nxt_s - cur_s), 2)
+        elif 0.0 < gap <= 0.5 and not str(cur.get("original", "")).strip().startswith("♪"):
+            cur["duration_beats"] = round(cur_d + gap, 2)
+
+    # Sync start/end seconds & clamp intra-line words
+    for ln in lines:
+        s_b = _start_beats(ln)
+        d_b = max(0.5, float(ln["duration_beats"]))
+        ln["start"] = round(t0 + s_b * beat_sec, 3)
+        ln["end"] = round(t0 + (s_b + d_b) * beat_sec, 3)
+
+        words = ln.get("words") or []
+        if words and not ln.get("whole_line"):
+            for j, w in enumerate(words):
+                rb = max(0.0, round(float(w.get("rel_beat", 0.0)) * 4.0) / 4.0)
+                if j > 0:
+                    prev_rb = float(words[j - 1]["rel_beat"])
+                    if rb <= prev_rb:
+                        rb = round(min(d_b - 0.125, prev_rb + 0.25), 3)
+                w["rel_beat"] = round(min(max(0.0, d_b - 0.125), rb), 3)
+
+            for j, w in enumerate(words):
+                rb = float(w["rel_beat"])
+                next_rb = float(words[j + 1]["rel_beat"]) if j + 1 < len(words) else d_b
+                cap = min(d_b, max(rb + 0.125, next_rb))
+                db = max(0.125, round(float(w.get("duration_beats", 0.25)) * 4.0) / 4.0)
+                if rb + db > cap + 1e-6:
+                    db = round(max(0.125, cap - rb), 3)
+                w["duration_beats"] = db
+
+    return score
 
 
 def quantize_timeline_to_score(
@@ -297,16 +409,18 @@ def quantize_timeline_to_score(
             "end": round(line_end_sec, 3),
             "original": ln["original"],
             "words": q_words,
-            "whole_line": bool(ln.get("whole_line", False)),
+            "whole_line": bool(ln.get("whole_line", False)) or _should_use_whole_line(str(ln["original"])),
             "pronunciation": ln.get("pronunciation", ""),
             "translation": ln.get("translation", ""),
             "comment": ln.get("comment"),
         })
 
+    _apply_repeated_line_consensus(score_lines)
+
     meta = dict(timeline_or_aligned.get("meta", {}))
     meta.setdefault("content_scale", 1.18)
 
-    return {
+    score = {
         "grid": {
             "bpm": bpm,
             "time_signature": ts,
@@ -315,6 +429,7 @@ def quantize_timeline_to_score(
         "meta": meta,
         "lines": score_lines,
     }
+    return enforce_score_integrity(score)
 
 
 def compile_score_to_timeline(score: dict[str, Any]) -> dict[str, Any]:
