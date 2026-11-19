@@ -9,6 +9,7 @@ from typing import Any
 import numpy as np
 
 from common import write_json
+from ctc_path import forced_ctc_path
 
 
 LRC_TIME_RE = re.compile(r"\[(\d+):(\d+(?:\.\d+)?)\]")
@@ -181,7 +182,9 @@ def _separate_vocals_demucs(analysis_wav: Path, vocals_out: Path) -> Path:
     vocals = (sources[vocals_idx].cpu() * ref_std + ref_mean).mean(dim=0)
     # Resample to 16 kHz mono for Whisper/stable-ts
     vocals_16k = AF.resample(vocals.unsqueeze(0), model.samplerate, 16000).squeeze(0).numpy()
-    sf.write(str(vocals_out), vocals_16k, 16000)
+    temporary = vocals_out.with_suffix(".tmp.wav")
+    sf.write(str(temporary), vocals_16k, 16000)
+    temporary.replace(vocals_out)
     return vocals_out
 
 
@@ -298,6 +301,93 @@ def _romanize_token(token: str, default_iso3: str, kakasi_conv: Any = None) -> s
     return urom_list[0].strip() if urom_list else ""
 
 
+class CtcVocalAligner:
+    """One emission model and audio buffer for coarse or per-line alignment."""
+
+    def __init__(self, audio_path: Path, default_lang: str):
+        import ctc_forced_aligner as cfa
+        import soundfile as sf
+        import torch
+        from ctc_forced_aligner.alignment_utils import merge_repeats
+        from huggingface_hub import snapshot_download
+        from huggingface_hub.errors import LocalEntryNotFoundError
+
+        try:
+            import pykakasi
+
+            self.kakasi = pykakasi.kakasi()
+        except ImportError:
+            self.kakasi = None
+
+        samples, sr = sf.read(str(audio_path), dtype="float32")
+        if samples.ndim > 1:
+            samples = samples.mean(axis=1)
+        self.sr = 16000
+        if sr != self.sr:
+            import torchaudio.functional as AF
+
+            samples = AF.resample(torch.from_numpy(samples), sr, self.sr).numpy()
+
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        model_path = "MahmoudAshraf/mms-300m-1130-forced-aligner"
+        try:
+            model_path = snapshot_download(model_path, local_files_only=True)
+        except LocalEntryNotFoundError:
+            pass
+        self.model, self.tokenizer = cfa.load_alignment_model(
+            device, model_path=model_path, dtype=torch.float16 if device == "cuda" else torch.float32,
+        )
+        self.samples = samples
+        self.duration = len(samples) / self.sr
+        language = (default_lang.split() or ["en"])[0].lower()
+        self.language = ISO1_TO_ISO3.get(language, "eng")
+        self.cfa = cfa
+        self.torch = torch
+        self.merge_repeats = merge_repeats
+        self.vocabulary = {key.lower(): index for key, index in self.tokenizer.get_vocab().items()}
+        self.vocabulary["<star>"] = int(self.model.config.vocab_size)
+        self.blank = self.vocabulary.get("<blank>", self.tokenizer.pad_token_id)
+        self.labels = {index: key for key, index in self.vocabulary.items()}
+        self.romanized: dict[str, str] = {}
+
+    def emissions(self, start: float, end: float) -> tuple[Any, float, float]:
+        first = max(0, round(start * self.sr))
+        last = min(len(self.samples), round(end * self.sr))
+        tensor = self.torch.from_numpy(self.samples[first:last]).to(self.model.device, dtype=self.model.dtype)
+        emissions, stride_ms = self.cfa.generate_emissions(self.model, tensor, batch_size=4)
+        return emissions, stride_ms, first / self.sr
+
+    def align_tokens(self, emissions: Any, stride_ms: float, tokens: list[str]) -> list[dict[str, Any] | None]:
+        text = ["<star>"]
+        normalized = ["<star>"]
+        spoken = []
+        for token in tokens:
+            if token not in self.romanized:
+                self.romanized[token] = _romanize_token(token, self.language, self.kakasi)
+            romanized = self.romanized[token]
+            spoken.append(bool(romanized))
+            if romanized:
+                normalized.extend([romanized, "<star>"])
+                text.extend([token, "<star>"])
+        labels = " ".join(normalized).split()
+        if not any(spoken) or any(label not in self.vocabulary for label in labels):
+            return [None] * len(tokens)
+        targets = [self.vocabulary[label] for label in labels]
+        # The pinned native aligner can corrupt memory on constrained CTC paths.
+        # Compute the same trellis with bounded state storage instead.
+        result = forced_ctc_path(emissions.detach().cpu().float().numpy(), targets, self.blank)
+        if result is None:
+            return [None] * len(tokens)
+        path, scores = result
+        segments = self.merge_repeats(path.tolist(), self.labels)
+        try:
+            spans = self.cfa.get_spans(normalized, segments, self.labels[self.blank])
+        except AssertionError:
+            return [None] * len(tokens)
+        matches = iter(self.cfa.postprocess_results(text, spans, stride_ms, scores))
+        return [next(matches, None) if is_spoken else None for is_spoken in spoken]
+
+
 def _align_chunks_with_ctc(
     vocals_wav: Path,
     base_segments: list[dict[str, Any]],
@@ -305,31 +395,8 @@ def _align_chunks_with_ctc(
     lrc_anchor_tolerance: float = 0.9,
 ) -> list[dict[str, Any]]:
     """Run MMS-300M CTC forced alignment per LRC-anchored chunk and clamp outliers back to .lrc."""
-    import ctc_forced_aligner as cfa
-    import soundfile as sf
-    import torch
-
-    try:
-        import pykakasi
-
-        kakasi_conv = pykakasi.kakasi()
-    except ImportError:
-        kakasi_conv = None
-
-    vocals_16k, sr = sf.read(str(vocals_wav), dtype="float32")
-    if vocals_16k.ndim > 1:
-        vocals_16k = vocals_16k.mean(axis=1)
-    if sr != 16000:
-        import torchaudio.functional as AF
-
-        vocals_16k = AF.resample(torch.from_numpy(vocals_16k).unsqueeze(0), sr, 16000).squeeze(0).numpy()
-        sr = 16000
-
-    total_dur = len(vocals_16k) / sr
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if device == "cuda" else torch.float32
-    model, tokenizer = cfa.load_alignment_model(device, dtype=dtype)
-    default_iso3 = ISO1_TO_ISO3.get(default_lang, "eng")
+    aligner = CtcVocalAligner(vocals_wav, default_lang)
+    total_dur = aligner.duration
 
     intro_lines = [s for s in base_segments if s["original"].startswith("♪")]
     singing_lines = [s for s in base_segments if not s["original"].startswith("♪")]
@@ -340,32 +407,14 @@ def _align_chunks_with_ctc(
     for chunk in chunks:
         win_start = max(0.0, chunk[0]["start"] - 1.2)
         win_end = min(total_dur, chunk[-1]["end"] + 1.8)
-        s_idx = int(win_start * sr)
-        e_idx = int(win_end * sr)
-        chunk_tensor = torch.from_numpy(vocals_16k[s_idx:e_idx]).to(model.device, dtype=model.dtype)
-        emissions, stride = cfa.generate_emissions(model, chunk_tensor, batch_size=4)
+        emissions, stride, win_start = aligner.emissions(win_start, win_end)
         stride_sec = float(stride) / 1000.0
         n_em_frames = emissions.shape[0]
 
-        # Align each .lrc line inside its own padded slice of `emissions` so repeated lines never steal neighbors
+        # Each LRC line gets its own padded slice of the chunk's emissions.
         line_pad = 0.85
         for orig_seg in chunk:
-            tokens_starred: list[str] = ["<star>"]
-            text_starred: list[str] = ["<star>"]
-            word_entries: list[tuple[str, bool]] = []
-
-            for w_tok in orig_seg["original"].split():
-                urom = _romanize_token(w_tok, default_iso3, kakasi_conv)
-                if urom:
-                    tokens_starred.extend([urom, "<star>"])
-                    text_starred.extend([w_tok, "<star>"])
-                    word_entries.append((w_tok, True))
-                else:
-                    word_entries.append((w_tok, False))
-
-            if not any(flag for _, flag in word_entries):
-                aligned_singing.append(orig_seg)
-                continue
+            tokens = orig_seg["original"].split()
 
             sub_start = max(win_start, orig_seg["start"] - line_pad)
             sub_end = min(win_end, orig_seg["end"] + line_pad)
@@ -375,21 +424,17 @@ def _align_chunks_with_ctc(
                 aligned_singing.append(orig_seg)
                 continue
 
-            sub_emissions = emissions[em_s:em_e]
             slice_origin = win_start + em_s * stride_sec
-
-            segments_ctc, scores, blank = cfa.get_alignments(sub_emissions, tokens_starred, tokenizer)
-            spans = cfa.get_spans(tokens_starred, segments_ctc, blank)
-            ctc_words = cfa.postprocess_results(text_starred, spans, stride, scores)
+            try:
+                matches = aligner.align_tokens(emissions[em_s:em_e], stride, tokens)
+            except (RuntimeError, IndexError, ValueError):
+                aligned_singing.append(orig_seg)
+                continue
 
             words: list[dict[str, Any]] = []
             line_scores: list[float] = []
-            ctc_cursor = 0
-
-            for w_tok, is_aligned in word_entries:
-                if is_aligned and ctc_cursor < len(ctc_words):
-                    cw = ctc_words[ctc_cursor]
-                    ctc_cursor += 1
+            for w_tok, cw in zip(tokens, matches):
+                if cw is not None:
                     ws = round(slice_origin + float(cw["start"]), 3)
                     we = round(slice_origin + float(cw["end"]), 3)
                     if we <= ws:
@@ -422,7 +467,7 @@ def _align_chunks_with_ctc(
 
     combined = intro_lines + aligned_singing
     combined.sort(key=lambda s: s["id"])
-    return _snap_to_vocal_energy(combined, vocals_16k, sr=sr)
+    return _snap_to_vocal_energy(combined, aligner.samples, sr=aligner.sr)
 
 
 def _align_chunks_with_stable_ts(
@@ -665,6 +710,14 @@ def run_align(
                     "No LRC lyrics found and stable-ts/demucs are not installed. "
                     "Provide --lyrics <file> or install alignment dependencies."
                 ) from exc
+
+    if has_lrc_timestamps:
+        lrc_segments = parse_lrc(raw_text or "", duration)
+        lrc_by_id = {row["id"]: row for row in lrc_segments}
+        for row in segments:
+            anchor = lrc_by_id.get(row["id"])
+            if anchor and anchor["original"] == row["original"]:
+                row["lrc_start"] = anchor["start"]
 
     aligned_payload = {
         "meta": meta,

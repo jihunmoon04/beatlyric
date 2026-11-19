@@ -1,0 +1,53 @@
+:root {
+  --in-oklab: ;
+}
+
+@supports (background: linear-gradient(in oklab, white, black)) {
+  :root {
+    --in-oklab: in oklab;
+  }
+}
+
+.study-stage-root {
+  font-family: "Noto Sans KR", "Noto Sans JP", "Pretendard", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+  font-size-adjust: from-font;
+}
+
+.study-serif {
+  font-family: "Noto Serif KR", "Noto Sans JP", Georgia, "Times New Roman", serif;
+  font-size-adjust: from-font;
+}
+
+@supports not (font-size-adjust: from-font) {
+  .study-stage-root {
+    line-height: 1.32;
+  }
+  .study-serif {
+    line-height: 1.32;
+  }
+}
+
+progress.track-progress {
+  appearance: none;
+  border: 0 solid;
+  overflow: clip;
+  border-radius: 1e5px;
+  height: 4px;
+  width: 100%;
+  display: block;
+  background: rgba(255, 255, 255, 0.14);
+}
+
+progress.track-progress::-webkit-progress-bar {
+  background: transparent;
+}
+
+progress.track-progress::-webkit-progress-value {
+  background: var(--progress-bar-fill, #d88392);
+  border-radius: 1e5px;
+}
+
+progress.track-progress::-moz-progress-bar {
+  background: var(--progress-bar-fill, #d88392);
+  border-radius: 1e5px;
+}

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import re
+import shutil
+import sys
 import threading
 import time
 import traceback
@@ -10,32 +12,39 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from audio_resolver import resolve_audio_for_track
-from common import OUTPUT_DIR, WORK_DIR, read_json, slugify, write_json
-from render_lib import render_work_dir
+from common import JobInterrupted, OUTPUT_DIR, WORK_DIR, read_json, run_cmd, slugify, write_json
+from queue_prepare import PREPARE_STEPS
+from render_lib import STYLE_TO_COMP, render_work_dir
 from spotify_sync import (
     fetch_playlist_tracks,
     get_spotify_config,
     parse_spotify_playlist_id,
 )
-from step1_ingest import run_ingest
-from step2_align import run_align
-from step3_spectrum import extract_spectrum
-from step4_score import ensure_score_file
-from step5_enrich import (
-    DEFAULT_ACP_MODEL,
-    enrich_with_agy_acp,
-    enrich_with_gemini_api,
-    export_llm_prompt_bundle,
-    is_agy_acp_available,
-    resolve_gemini_api_key,
-)
+from step5_enrich import DEFAULT_ACP_MODEL
 from env_utils import get_env
 from youtube_upload import get_youtube_status, upload_private_video
 
 
 STATE_DIR = WORK_DIR / ".studio"
 QUEUE_PATH = STATE_DIR / "queue.json"
+
+PREPARE_SEQUENCE = tuple(PREPARE_STEPS)
+QUEUED_TO_ACTIVE = {
+    "queued_prepare": "preparing", "queued_render": "rendering", "queued_upload": "uploading",
+}
+ACTIVE_TO_QUEUED = {active: queued for queued, active in QUEUED_TO_ACTIVE.items()}
+QUEUE_STEPS = {"queued_prepare": "source", "queued_render": "render", "queued_upload": "upload"}
+
+
+def _queue_for_step(step: str) -> str:
+    return {"render": "queued_render", "upload": "queued_upload"}.get(step, "queued_prepare")
+
+
+def _step_label(step: str) -> str:
+    if step in PREPARE_STEPS:
+        return PREPARE_STEPS[step].removesuffix(" 중")
+    return {"render": "MP4 렌더링", "upload": "YouTube 업로드", "refresh_notes": "ACP 주석"}.get(step, step)
+
 
 _JA_RE = re.compile(r"[\u3040-\u30ff]")
 _KO_RE = re.compile(r"[\uac00-\ud7af]")
@@ -79,6 +88,8 @@ class StudioQueueManager:
         self._render_event = threading.Event()
         self._stop_event = threading.Event()
         self._workers_started = False
+        self._active_jobs: dict[str, threading.Event] = {}
+        self._workers: list[threading.Thread] = []
         self._logs: list[dict[str, str]] = []
         self._state = self._load_or_init_state()
         self.sync_existing_work_dirs()
@@ -118,17 +129,17 @@ class StudioQueueManager:
             changed = False
             tracks = self._state.setdefault("tracks", {})
 
-            # Recover interrupted states from previous server shutdown
-            recover_map = {
-                "preparing": "queued_prepare",
-                "rendering": "queued_render",
-                "uploading": "queued_upload",
-            }
-            for item in tracks.values():
-                st = item.get("status")
-                if st in recover_map:
-                    item["status"] = recover_map[st]
-                    item["step_message"] = "서버 재시작 후 대기열 복구됨"
+            # Only recover persisted running jobs at startup, never during a dashboard poll.
+            if not self._workers_started:
+                for item in tracks.values():
+                    status = item.get("status")
+                    if status not in ACTIVE_TO_QUEUED:
+                        continue
+                    queued = ACTIVE_TO_QUEUED[status]
+                    item["stage"] = item.get("stage") or QUEUE_STEPS[queued]
+                    action = item.pop("pending_action", None)
+                    item["status"] = {"pause": "paused", "cancel": "cancelled"}.get(action, queued)
+                    item["step_message"] = "서버 재시작 후 작업 지점 복구"
                     changed = True
 
             if WORK_DIR.exists():
@@ -189,8 +200,9 @@ class StudioQueueManager:
             self._workers_started = True
         t_prep = threading.Thread(target=self._prepare_worker_loop, name="beatlyric-prepare", daemon=True)
         t_ren = threading.Thread(target=self._render_worker_loop, name="beatlyric-render-upload", daemon=True)
-        t_prep.start()
-        t_ren.start()
+        self._workers = [t_prep, t_ren]
+        for worker in self._workers:
+            worker.start()
         self._prepare_event.set()
         self._render_event.set()
 
@@ -198,6 +210,8 @@ class StudioQueueManager:
         self._stop_event.set()
         self._prepare_event.set()
         self._render_event.set()
+        for worker in self._workers:
+            worker.join(timeout=2)
 
     def _update_track(self, slug: str, **fields: Any) -> dict[str, Any] | None:
         with self._lock:
@@ -393,18 +407,23 @@ class StudioQueueManager:
             item = self._state["tracks"].get(slug)
             if not item:
                 raise KeyError(f"Unknown track slug: {slug}")
+            if item["status"] not in {"needs_review", "rendered", "uploaded"}:
+                raise ValueError("검수나 렌더를 마친 곡만 대기열에 추가할 수 있습니다.")
             chosen_style = style or item.get("style") or "minimal"
             style_changed = chosen_style != (item.get("style") or "minimal")
             item["style"] = chosen_style
             item["upload_requested"] = bool(upload_to_youtube)
 
             existing_mp4 = Path(item["output_path"]) if item.get("output_path") else (OUTPUT_DIR / f"{slug}_{chosen_style}.mp4")
-            if upload_to_youtube and not style_changed and existing_mp4.exists() and not item.get("youtube"):
+            if upload_to_youtube and not style_changed and existing_mp4.exists() and not item.get("youtube") and not item.get("output_is_clip"):
                 item["status"] = "queued_upload"
+                item["output_path"] = str(existing_mp4)
                 item["step_message"] = "유튜브 비공개 업로드 대기열 추가됨"
             else:
                 item["status"] = "queued_render"
                 item["step_message"] = "렌더링 대기열 추가됨"
+            item["render_options"] = {}
+            item["stage"] = QUEUE_STEPS[item["status"]]
             item["error"] = None
             item["updated_at"] = _utc_now_iso()
             self._save_state_locked()
@@ -414,64 +433,185 @@ class StudioQueueManager:
         self._render_event.set()
         return snapshot
 
-    def retry_track(self, slug: str) -> dict[str, Any]:
-        """Retry a failed track from the failed stage or prepare stage."""
+    def enqueue_render(
+        self, slug: str, style: str | None = None, output: Path | None = None,
+        clip_start: float | None = None, clip_end: float | None = None,
+        score: dict[str, Any] | None = None, timeline: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        self.sync_existing_work_dirs()
         with self._lock:
-            if slug not in self._state["tracks"]:
-                self.sync_existing_work_dirs()
             item = self._state["tracks"].get(slug)
             if not item:
                 raise KeyError(f"Unknown track slug: {slug}")
-            work_dir = WORK_DIR / slug
-            has_score = (work_dir / "score.json").exists() and (work_dir / "master_audio.m4a").exists()
-            has_mp4 = bool(item.get("output_path") and Path(item["output_path"]).exists())
+            if item["status"] not in {"needs_review", "rendered", "uploaded"}:
+                raise ValueError("현재 곡에 진행 중이거나 대기 중인 작업이 있습니다.")
+            chosen_style = style or item.get("style") or "minimal"
+            if chosen_style not in STYLE_TO_COMP:
+                raise ValueError(f"지원하지 않는 영상 스타일입니다: {chosen_style}")
+            if score and timeline:
+                write_json(WORK_DIR / slug / "score.json", score)
+                write_json(WORK_DIR / slug / "timeline.json", timeline)
+            result = self._update_track(
+                slug, status="queued_render", stage="render", style=chosen_style,
+                upload_requested=False, step_message="MP4 렌더링 대기", error=None,
+                render_options={"output": str(output) if output else None,
+                                "clip_start": clip_start, "clip_end": clip_end},
+            )
+        self._render_event.set()
+        return result
 
-            if has_mp4 and item.get("upload_requested") and not item.get("youtube"):
-                next_status = "queued_upload"
-                msg = "유튜브 업로드 재시도 대기"
-            elif has_score:
-                next_status = "queued_render"
-                msg = "렌더링 재시도 대기"
+    def control_track(self, slug: str, action: str) -> dict[str, Any]:
+        """Pause, resume or cancel only the selected track."""
+        with self._lock:
+            item = self._state["tracks"].get(slug)
+            if not item:
+                raise KeyError(f"Unknown track slug: {slug}")
+            status = item["status"]
+            stage = item.get("stage") or QUEUE_STEPS.get(status, "source")
+            label = _step_label(stage)
+            if action == "resume" and status == "paused":
+                queued = _queue_for_step(stage)
+                updates = {"status": queued, "step_message": f"{label} · 재개 대기", "error": None}
+            elif action in {"pause", "cancel"} and status in QUEUED_TO_ACTIVE:
+                updates = {
+                    "status": "paused" if action == "pause" else "cancelled",
+                    "stage": stage,
+                    "step_message": f"{label} · " + ("일시정지됨" if action == "pause" else "중단됨"),
+                }
+            elif action in {"pause", "cancel"} and status in ACTIVE_TO_QUEUED and slug in self._active_jobs:
+                if item.get("pending_action") == "cancel":
+                    raise ValueError("작업을 중단 중입니다.")
+                updates = {
+                    "pending_action": action,
+                    "step_message": f"{label} · " + ("일시정지 처리 중" if action == "pause" else "중단 처리 중"),
+                }
+                self._active_jobs[slug].set()
+            elif action == "cancel" and status == "paused":
+                updates = {"status": "cancelled", "step_message": f"{label} · 중단됨"}
             else:
-                next_status = "queued_prepare"
-                msg = "자동 준비 재시도 대기"
+                raise ValueError("현재 상태에서 이 작업을 실행할 수 없습니다.")
+            snapshot = self._update_track(slug, **updates)
+            self._prepare_event.set()
+            self._render_event.set()
+            return snapshot
 
-            item["status"] = next_status
-            item["error"] = None
-            item["step_message"] = msg
-            item["updated_at"] = _utc_now_iso()
-            self._save_state_locked()
-            snapshot = dict(item)
-
+    def retry_track(self, slug: str) -> dict[str, Any]:
+        """Requeue a failed or cancelled track at its first incomplete step."""
+        with self._lock:
+            item = self._state["tracks"].get(slug)
+            if not item:
+                raise KeyError(f"Unknown track slug: {slug}")
+            if item["status"] not in {"failed", "cancelled"}:
+                raise ValueError("실패했거나 중단된 곡만 다시 실행할 수 있습니다.")
+            stage = item.get("stage")
+            if not stage:
+                # Older records only retained descriptive status messages.
+                message = item.get("step_message", "")
+                if message == "렌더/업로드 실패":
+                    output = item.get("output_path")
+                    stage = "upload" if output and Path(output).exists() and item.get("upload_requested") else "render"
+                else:
+                    stage = "source"
+            result = self._update_track(
+                slug, status=_queue_for_step(stage), stage=stage, error=None, step_message="재시도 대기",
+            )
         self._prepare_event.set()
         self._render_event.set()
-        self._log(f"재시도 요청 ({snapshot['status']})", slug=slug)
-        return snapshot
+        return result
 
     def enrich_track_with_acp(self, slug: str, model_id: str | None = None) -> dict[str, Any]:
-        """Run Step 5 enrichment via scoped `agy acp` in a background thread."""
-        work_dir = WORK_DIR / slug
-        if not work_dir.exists():
-            raise FileNotFoundError(f"Track work directory not found: {slug}")
+        """Queue a new annotation pass for a prepared track."""
         chosen_model = model_id or get_env("AGY_ACP_MODEL", DEFAULT_ACP_MODEL) or DEFAULT_ACP_MODEL
-
-        def _worker() -> None:
-            try:
-                self._update_track(slug, step_message=f"agy acp ({chosen_model}) 학습 노트 생성 중...")
-                self._log(f"agy acp 학습 노트 생성 시작 ({chosen_model})", slug=slug)
-                res = enrich_with_agy_acp(work_dir, model_id=chosen_model)
-                self._update_track(
-                    slug,
-                    step_message=f"agy acp ({chosen_model}) {res['updated_lines']}줄 주석 완료",
-                    error=None,
-                )
-                self._log(f"agy acp 주석 완료 ({res['updated_lines']}줄)", slug=slug)
-            except Exception as exc:
-                self._update_track(slug, step_message="agy acp 주석 실패", error=str(exc))
-                self._log(f"agy acp 주석 실패: {exc}", slug=slug, level="error")
-
-        threading.Thread(target=_worker, name=f"acp-enrich-{slug}", daemon=True).start()
+        with self._lock:
+            item = self._state["tracks"].get(slug)
+            if not item or not (WORK_DIR / slug).is_dir():
+                raise FileNotFoundError(f"Track work directory not found: {slug}")
+            if item["status"] not in {"needs_review", "rendered", "uploaded"}:
+                raise ValueError("검수 또는 렌더를 마친 곡에만 주석을 다시 요청할 수 있습니다.")
+            self._update_track(
+                slug, status="queued_prepare", stage="refresh_notes", notes_return_status=item["status"],
+                notes_model=chosen_model, step_message="ACP 주석 생성 대기", error=None,
+            )
+        self._prepare_event.set()
         return {"slug": slug, "model": chosen_model}
+
+    @staticmethod
+    def _remove_path_with_retry(path: Path, is_dir: bool) -> None:
+        last_exc: PermissionError | None = None
+        for attempt in range(3):
+            try:
+                if is_dir:
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
+                return
+            except FileNotFoundError:
+                return
+            except PermissionError as exc:
+                last_exc = exc
+                if attempt < 2:
+                    time.sleep(0.15)
+        if last_exc is not None:
+            raise last_exc
+
+    def delete_track(self, slug: str, delete_output: bool = False) -> dict[str, Any]:
+        """Safely delete a project work directory, queue entry, and optional rendered MP4s."""
+        raw = str(slug or "").strip()
+        if not raw or raw.startswith(".") or "/" in raw or "\\" in raw or Path(raw).name != raw:
+            raise ValueError(f"유효하지 않은 프로젝트 이름입니다: {slug}")
+
+        work_root = WORK_DIR.resolve()
+        work_dir = (WORK_DIR / raw).resolve()
+        if work_dir.parent != work_root:
+            raise ValueError(f"유효하지 않은 프로젝트 경로입니다: {slug}")
+
+        deleted_work_dir = False
+        deleted_outputs: list[str] = []
+
+        with self._lock:
+            item = self._state["tracks"].get(raw)
+            if item is None and not work_dir.exists():
+                raise FileNotFoundError(f"프로젝트를 찾을 수 없습니다: {raw}")
+
+            if (item and item.get("status") in {"preparing", "rendering", "uploading"}):
+                raise RuntimeError("현재 준비·렌더링·업로드·주석 생성이 진행 중인 프로젝트는 삭제할 수 없습니다.")
+
+            if work_dir.exists():
+                self._remove_path_with_retry(work_dir, is_dir=True)
+                deleted_work_dir = True
+
+            if delete_output:
+                out_root = OUTPUT_DIR.resolve()
+                seen_paths: set[Path] = set()
+                candidates: list[Path] = []
+                if item and item.get("output_path"):
+                    candidates.append(Path(str(item["output_path"])))
+                if OUTPUT_DIR.exists():
+                    candidates.extend(sorted(OUTPUT_DIR.glob(f"{raw}_*.mp4")))
+
+                for cand in candidates:
+                    try:
+                        resolved = cand.resolve()
+                    except OSError:
+                        continue
+                    if resolved in seen_paths or resolved.parent != out_root or not resolved.is_file():
+                        continue
+                    seen_paths.add(resolved)
+                    self._remove_path_with_retry(resolved, is_dir=False)
+                    deleted_outputs.append(resolved.name)
+
+            self._state["tracks"].pop(raw, None)
+            self._save_state_locked()
+
+        self._log(
+            f"프로젝트 삭제 완료 (work={deleted_work_dir}, mp4={len(deleted_outputs)}개)",
+            slug=raw,
+        )
+        return {
+            "slug": raw,
+            "deleted_work_dir": deleted_work_dir,
+            "deleted_outputs": deleted_outputs,
+        }
 
     def mark_track_rendered(self, slug: str, output_path: Path, style: str | None = None) -> None:
         """Update queue state when a user triggers an immediate render inside the studio."""
@@ -492,7 +632,7 @@ class StudioQueueManager:
     def get_dashboard_snapshot(self) -> dict[str, Any]:
         self.sync_existing_work_dirs()
         with self._lock:
-            tracks_list = list(self._state["tracks"].values())
+            tracks_list = [dict(item) for item in self._state["tracks"].values()]
             tracks_list.sort(key=lambda x: x.get("updated_at") or "", reverse=True)
             return {
                 "spotify_sync": dict(self._state["spotify_sync"]),
@@ -500,180 +640,131 @@ class StudioQueueManager:
                 "logs": list(self._logs[-40:]),
             }
 
-    def _next_track_with_statuses(self, statuses: tuple[str, ...]) -> dict[str, Any] | None:
-        with self._lock:
-            candidates = [
-                t for t in self._state["tracks"].values()
-                if t.get("status") in statuses
-            ]
-            if not candidates:
-                return None
-            candidates.sort(key=lambda x: x.get("created_at") or "")
-            return dict(candidates[0])
-
     def _prepare_worker_loop(self) -> None:
-        while not self._stop_event.is_set():
-            item = self._next_track_with_statuses(("queued_prepare",))
-            if not item:
-                self._prepare_event.clear()
-                self._prepare_event.wait(timeout=5.0)
-                continue
-            self._run_prepare_job(item)
-
-    def _run_prepare_job(self, item: dict[str, Any]) -> None:
-        slug = item["slug"]
-        work_dir = WORK_DIR / slug
-        style = item.get("style") or "minimal"
-        lang = item.get("language") or "en"
-
-        try:
-            self._update_track(slug, status="preparing", error=None, step_message="1/5 음원·커버 확보 중 (input/ 또는 yt-dlp)...")
-            self._log(f"준비 시작: {item['artist']} - {item['title']}", slug=slug)
-
-            resolved = resolve_audio_for_track(
-                title=item["title"],
-                artist=item["artist"],
-                duration_ms=item.get("duration_ms") or None,
-                slug=slug,
-                cover_url=item.get("cover_url") or None,
-                work_dir=work_dir,
-                source_url=item.get("source_url") or None,
-            )
-
-            self._update_track(slug, step_message="2/5 마스터 오디오 & 배경 이미지 생성 중...")
-            extra_meta = {
-                "spotify_track_id": item.get("spotify_track_id", ""),
-                "spotify_url": item.get("spotify_url", ""),
-                "album": item.get("album", ""),
-                "added_at": item.get("added_at", ""),
-            }
-            meta = run_ingest(
-                input_path=resolved["audio_path"],
-                work_dir=work_dir,
-                fps=30,
-                style=style,
-                language=lang,
-                title_override=item["title"],
-                artist_override=item["artist"],
-                cover_override_path=resolved.get("cover_path"),
-                extra_meta=extra_meta,
-            )
-
-            self._update_track(slug, step_message="3/5 가사 검색 · Demucs 보컬 분리 · CTC 정렬 중...")
-            run_align(
-                work_dir=work_dir,
-                meta=meta,
-                lyrics_file=None,
-                use_demucs=True,
-                force_neural_align=True,
-                aligner="ctc",
-            )
-
-            self._update_track(slug, step_message="4/5 스펙트럼 & 박자 악보(0.5박) 생성 중...")
-            extract_spectrum(
-                wav_path=work_dir / "analysis.wav",
-                out_path=work_dir / "spectrum.json",
-                fps=30,
-                num_bars=28,
-            )
-            score = ensure_score_file(work_dir, force=True)
-            export_llm_prompt_bundle(work_dir)
-
-            api_key = resolve_gemini_api_key(None)
-            acp_model = get_env("AGY_ACP_MODEL", DEFAULT_ACP_MODEL) or DEFAULT_ACP_MODEL
-            enrich_note = "프롬프트 생성됨 (GEMINI_API_KEY / agy 미설정)"
-            if is_agy_acp_available():
-                self._update_track(slug, step_message=f"5/5 agy acp ({acp_model}) 발음·해석·학습 노트 생성 중...")
-                enrich_with_agy_acp(work_dir, model_id=acp_model)
-                enrich_note = f"agy acp ({acp_model}) 학습 노트 완료"
-            elif api_key:
-                self._update_track(slug, step_message="5/5 Gemini API 발음·해석·학습 노트 생성 중...")
-                enrich_with_gemini_api(work_dir, api_key=api_key)
-                enrich_note = "Gemini API 학습 노트 완료"
-
-            self._update_track(
-                slug,
-                status="needs_review",
-                duration=meta.get("duration", item.get("duration", 0)),
-                step_message=f"검수 대기 (BPM {score['grid']['bpm']}, {len(score['lines'])}줄 · {enrich_note})",
-                error=None,
-            )
-            self._log("준비 완료 → 검수 대기 목록 이동", slug=slug)
-        except Exception as exc:
-            tb = traceback.format_exc(limit=3)
-            self._update_track(
-                slug,
-                status="failed",
-                step_message="자동 준비 실패",
-                error=f"{exc}\n{tb}",
-            )
-            self._log(f"준비 실패: {exc}", slug=slug, level="error")
+        self._worker_loop(("queued_prepare",), self._prepare_event)
 
     def _render_worker_loop(self) -> None:
-        while not self._stop_event.is_set():
-            item = self._next_track_with_statuses(("queued_render", "queued_upload"))
-            if not item:
-                self._render_event.clear()
-                self._render_event.wait(timeout=5.0)
-                continue
-            self._run_render_or_upload_job(item)
+        self._worker_loop(("queued_render", "queued_upload"), self._render_event)
 
-    def _run_render_or_upload_job(self, item: dict[str, Any]) -> None:
-        slug = item["slug"]
+    def _worker_loop(self, statuses: tuple[str, ...], wake: threading.Event) -> None:
+        while not self._stop_event.is_set():
+            wake.clear()
+            job = self._claim_job(statuses)
+            if job is None:
+                wake.wait(timeout=5.0)
+            else:
+                self._run_job(*job)
+
+    def _claim_job(self, statuses: tuple[str, ...]) -> tuple[dict[str, Any], threading.Event] | None:
+        with self._lock:
+            candidates = [item for item in self._state["tracks"].values() if item["status"] in statuses]
+            if not candidates:
+                return None
+            item = min(candidates, key=lambda track: track.get("created_at") or "")
+            queued = item["status"]
+            event = threading.Event()
+            snapshot = self._update_track(item["slug"], status=QUEUED_TO_ACTIVE[queued],
+                                          stage=item.get("stage") or QUEUE_STEPS[queued], error=None)
+            self._active_jobs[item["slug"]] = event
+            self._log(f"{snapshot['stage']} 작업 시작", slug=item["slug"])
+            return snapshot, event
+
+    def _finish_job(self, slug: str, stage: str, interrupted: bool = False, **fields: Any) -> None:
+        """Release the worker and commit the next stage or the requested stop under one lock."""
+        with self._lock:
+            item = self._state["tracks"][slug]
+            action = item.pop("pending_action", None)
+            if interrupted or fields.get("status") in QUEUED_TO_ACTIVE or fields.get("status") == "failed":
+                if action in {"pause", "cancel"}:
+                    stopped_message = "일시정지됨" if action == "pause" else "중단됨"
+                    fields.update(status="paused" if action == "pause" else "cancelled",
+                                  step_message=f"{_step_label(stage)} · {stopped_message}", error=None)
+                elif interrupted:
+                    fields.update(status=_queue_for_step(stage), step_message="작업 재개 대기")
+            self._update_track(slug, stage=stage, **fields)
+            self._active_jobs.pop(slug, None)
+            if fields.get("status") != "failed":
+                self._log(fields["step_message"], slug=slug)
+
+    def _run_job(self, item: dict[str, Any], event: threading.Event) -> None:
+        slug, stage = item["slug"], item["stage"]
         work_dir = WORK_DIR / slug
-        style = item.get("style") or "minimal"
+
+        def interrupted() -> bool:
+            return event.is_set() or self._stop_event.is_set()
 
         try:
-            out_path = Path(item["output_path"]) if item.get("output_path") else (OUTPUT_DIR / f"{slug}_{style}.mp4")
+            if stage == "refresh_notes":
+                task_path = work_dir / ".queue-task.json"
+                write_json(task_path, item)
+                self._update_track(slug, step_message="ACP 곡 해설 및 학습 노트 생성 중")
+                run_cmd([sys.executable, "-X", "utf8", str(Path(__file__).with_name("queue_prepare.py")),
+                         str(task_path), stage], interrupted=interrupted)
+                self._finish_job(slug, stage, status=item["notes_return_status"], step_message="ACP 주석 완료")
+                return
 
-            if item["status"] == "queued_render":
-                self._update_track(slug, status="rendering", error=None, step_message=f"Remotion 1080p MP4 렌더링 중 ({style})...")
-                self._log(f"MP4 렌더링 시작 ({style})", slug=slug)
-                out_path = render_work_dir(work_dir, style=style, output=out_path)
-                self._update_track(slug, output_path=str(out_path))
-                self._log(f"MP4 렌더링 완료: {out_path.name}", slug=slug)
+            if stage in PREPARE_STEPS:
+                task_path = work_dir / ".queue-task.json"
+                write_json(task_path, item)
+                for step in PREPARE_SEQUENCE[PREPARE_SEQUENCE.index(stage):]:
+                    # Commit the step pointer before starting its process.
+                    with self._lock:
+                        if interrupted():
+                            raise JobInterrupted()
+                        self._update_track(slug, stage=step, step_message=PREPARE_STEPS[step])
+                    stage = step
+                    proc = run_cmd([sys.executable, "-X", "utf8", str(Path(__file__).with_name("queue_prepare.py")),
+                             str(task_path), step], interrupted=interrupted)
+                    if step == "words" and proc is not None:
+                        summary = proc.stdout.strip().splitlines()[-1:] or ["단어 정렬 완료"]
+                        self._update_track(slug, word_alignment_summary=summary[0])
+                        self._log(summary[0], slug=slug)
+                    next_index = PREPARE_SEQUENCE.index(step) + 1
+                    if next_index < len(PREPARE_SEQUENCE):
+                        stage = PREPARE_SEQUENCE[next_index]
+                        self._update_track(slug, stage=stage)
+                meta = read_json(work_dir / "meta.json")
+                with self._lock:
+                    word_summary = self._state["tracks"][slug].get("word_alignment_summary")
+                message = f"검수 대기 · {word_summary}" if word_summary else "검수 대기"
+                self._finish_job(slug, stage, status="needs_review", duration=meta.get("duration", 0),
+                                 step_message=message)
+                return
 
-            if item.get("upload_requested"):
-                yt_status = get_youtube_status()
-                if not yt_status["configured"] or not yt_status["connected"]:
-                    msg = (
-                        "렌더 완료 (YouTube client_secrets.json 미설정)"
-                        if not yt_status["configured"]
-                        else "렌더 완료 (YouTube OAuth 로그인 필요)"
-                    )
-                    self._update_track(
-                        slug,
-                        status="rendered",
-                        step_message=msg,
-                        error=None,
-                    )
-                    self._log(msg, slug=slug)
-                    return
+            style = item.get("style") or "minimal"
+            default_output = OUTPUT_DIR / f"{slug}_{style}.mp4"
+            if stage == "render":
+                self._update_track(slug, step_message=f"MP4 렌더링 중 ({style})")
+                options = item.get("render_options") or {}
+                clip_start, clip_end = options.get("clip_start"), options.get("clip_end")
+                is_clip = clip_start is not None or clip_end is not None
+                output = Path(options["output"]) if options.get("output") else None
+                output = render_work_dir(work_dir, style=style, output=output,
+                                         clip_start=clip_start, clip_end=clip_end, interrupted=interrupted)
+                next_stage = "upload" if item.get("upload_requested") else "render"
+                self._finish_job(slug, next_stage, output_path=str(output), output_is_clip=is_clip,
+                                 status="queued_upload" if item.get("upload_requested") else "rendered",
+                                 step_message="업로드 대기" if item.get("upload_requested") else "MP4 렌더링 완료")
+                self._render_event.set()
+                return
 
-                self._update_track(slug, status="uploading", error=None, step_message="YouTube 비공개(private) 업로드 중...")
-                self._log("YouTube 비공개 업로드 시작", slug=slug)
-                yt_res = upload_private_video(work_dir, out_path)
-                self._update_track(
-                    slug,
-                    status="uploaded",
-                    youtube=yt_res,
-                    step_message=f"YouTube 비공개 업로드 완료 ({yt_res['video_id']})",
-                    error=None,
-                )
-                self._log(f"YouTube 업로드 완료: {yt_res['url']}", slug=slug)
-            else:
-                self._update_track(
-                    slug,
-                    status="rendered",
-                    step_message=f"MP4 렌더링 완료 ({out_path.name})",
-                    error=None,
-                )
+            if stage != "upload":
+                raise ValueError(f"Unknown work stage: {stage}")
+            if interrupted():
+                raise JobInterrupted()
+            yt = get_youtube_status()
+            if not yt["configured"] or not yt["connected"]:
+                self._finish_job(slug, stage, status="rendered",
+                                 step_message="렌더 완료 · YouTube OAuth 연결 필요")
+                return
+            output = Path(item.get("output_path") or default_output)
+            self._update_track(slug, step_message="YouTube 비공개 업로드 중")
+            result = upload_private_video(work_dir, output, interrupted=interrupted)
+            self._finish_job(slug, stage, status="uploaded", youtube=result,
+                             step_message="YouTube 비공개 업로드 완료")
+        except JobInterrupted:
+            self._finish_job(slug, stage, interrupted=True)
         except Exception as exc:
-            tb = traceback.format_exc(limit=3)
-            self._update_track(
-                slug,
-                status="failed",
-                step_message="렌더/업로드 실패",
-                error=f"{exc}\n{tb}",
-            )
-            self._log(f"렌더/업로드 실패: {exc}", slug=slug, level="error")
+            self._finish_job(slug, stage, status="failed", step_message="작업 실패",
+                             error=f"{exc}\n{traceback.format_exc(limit=3)}")
+            self._log(f"{stage} 실패: {exc}", slug=slug, level="error")

@@ -1,6 +1,6 @@
 # Lyric Study Video Pipeline
 
-좋아하는 음악(음원/영상)에서 **보컬 분리 · 가사 강제 정렬 · 박자 악보 양자화(`0.5`박/`0.25`박) · 발음/번역/학습 코멘트**를 생성한 뒤, **Beat Score Studio** 웹 UI에서 실시간 미리보기로 검수·조절하고 즉시 1080p MP4 학습 영상으로 렌더링하는 파이프라인입니다.
+좋아하는 음악(음원/영상)에서 **보컬 분리 · 박자 기반 줄 경계 정렬 · 보컬 기반 단어 정렬 · 발음/번역/학습 코멘트**를 생성한 뒤, **Beat Score Studio** 웹 UI에서 실시간 미리보기로 검수·조절하고 즉시 1080p MP4 학습 영상으로 렌더링하는 파이프라인입니다.
 
 ---
 
@@ -16,25 +16,28 @@
 [Step 3] 오디오 스펙트럼 추출 (step3_spectrum.py)
    └─ spectrum.json (30fps, 28 bars)
         │
-[Step 4] 박자 검출 & 보컬 온셋 기반 악보 양자화 (step4_score.py)
-   └─ analysis.wav BPM/t0 추정 + vocals.wav 에너지 온셋 대조 0.5박/0.25박 스냅
-      → score.json / score_initial.json / timeline.json
+[Step 4] 박자 검출 & 가사 줄 경계 결정 (step4_score.py)
+   └─ analysis.wav BPM/t0 추정 + 가사·보컬 근거로 0.5박 단위 줄 배치
         │
-[Step 5] ★ LLM 개입 단계 ★ (step5_enrich.py)
+[Step 5] 줄 내부 단어 보컬 정렬 (word_alignment.py)
+   └─ 고정된 줄 안의 보컬과 원문을 CTC로 정렬 → score.json / score_initial.json / timeline.json
+        │
+[Step 6] 학습 정보 생성 (step5_enrich.py)
    └─ 타이밍/박자/단어 좌표는 100% 보존하고 언어 학습 정보만 생성·병합
       (pronunciation 한글 발음, translation 번역, comment 학습 노트)
       • 방식 A: Gemini API 자동 호출 (GEMINI_API_KEY / --api-key)
       • 방식 B: AI 에이전트(채팅창)에 llm_prompt.md 전달 후 --from-json 병합
         │
-[Step 6] Beat Score Studio 검수 & 미세 조정 (studio_server.py / studio_ui.html)
+[Step 7] Beat Score Studio 검수 & 미세 조정 (studio_server.py / studio_ui.html)
    └─ 고정 16:9 1920x1080 실시간 프리뷰 · 0.5박 줄 이동/길이 · 0.25박 단어 이동/길이
-      우클릭 드래그 패닝 · 블록 우클릭 한줄전체(whole_line) 전환 · Undo/초기화
+      박자와 줄 경계 검수 → 전체 줄 또는 선택 줄 단어 보컬 정렬 → 저장
         │
-[Step 7] 확인 완료 · MP4 렌더링 (render_lib.py + Remotion + FFmpeg)
+[Step 8] 확인 완료 · MP4 렌더링 (render_lib.py + Remotion + FFmpeg)
    └─ 스튜디오에서 [확인 완료 · MP4 렌더링] 클릭 → output/<곡>_<스타일>.mp4 생성
 ```
 
-> **LLM이 개입하는 곳:** 오직 **Step 5 (`step5_enrich.py`)** 한 곳입니다.  
+> **LLM이 개입하는 곳:** 오직 **Step 6 (`step5_enrich.py`)** 한 곳입니다.
+>
 > 박자와 가사 타이밍은 오디오(Demucs + CTC/Whisper + `vocals.wav` 온셋)와 사용자가 Studio에서 맞춘 `score.json`을 기준으로 결정되며, LLM은 **가사별 발음(`pronunciation`), 의역(`translation`), 표현 해설(`comment`)**만 채워 넣습니다.
 
 ---

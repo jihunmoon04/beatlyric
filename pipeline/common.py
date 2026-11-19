@@ -3,9 +3,13 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 import shutil
+import signal
 import subprocess
+import tempfile
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -38,16 +42,49 @@ def get_ffmpeg_exe() -> str:
     return imageio_ffmpeg.get_ffmpeg_exe()
 
 
-def run_cmd(cmd: list[str], cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-    """Run an external command and raise a readable error on failure."""
-    proc = subprocess.run(
-        cmd,
-        cwd=str(cwd) if cwd else None,
-        text=True,
-        capture_output=True,
-        encoding="utf-8",
-        errors="replace",
-    )
+class JobInterrupted(Exception):
+    """The queue interrupted a single job between safe operations."""
+
+
+def run_cmd(
+    cmd: list[str],
+    cwd: Path | None = None,
+    check: bool = True,
+    interrupted: Callable[[], bool] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run an external command, optionally terminating its process tree on a queue request."""
+    options = {
+        "cwd": str(cwd) if cwd else None,
+        "encoding": "utf-8",
+        "errors": "replace",
+    }
+    if interrupted is None:
+        proc = subprocess.run(cmd, capture_output=True, **options)
+    else:
+        if interrupted():
+            raise JobInterrupted()
+        with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                              start_new_session=os.name != "nt", **options) as child:
+            while True:
+                try:
+                    stdout, stderr = child.communicate(timeout=0.25)
+                    break
+                except subprocess.TimeoutExpired:
+                    if not interrupted():
+                        continue
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/PID", str(child.pid), "/T", "/F"],
+                                       capture_output=True, check=False)
+                    else:
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                    if child.poll() is None:
+                        child.kill()
+                    child.communicate()
+                    raise JobInterrupted()
+            proc = subprocess.CompletedProcess(cmd, child.returncode, stdout, stderr)
     if check and proc.returncode != 0:
         raise RuntimeError(
             f"Command failed ({proc.returncode}): {' '.join(cmd)}\n"
@@ -111,5 +148,16 @@ def read_json(path: Path) -> Any:
 
 def write_json(path: Path, data: Any) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8") as f:
-        json.dump(data, f, ensure_ascii=False, indent=2)
+    with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=path.parent,
+                                     prefix=f".{path.name}.", suffix=".tmp", delete=False) as f:
+        temporary = Path(f.name)
+        try:
+            json.dump(data, f, ensure_ascii=False, indent=2)
+        except BaseException:
+            f.close()
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)

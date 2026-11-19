@@ -4,7 +4,15 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>박자 악보 &amp; 영상 싱크 스튜디오</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&family=Noto+Sans+KR:wght@400;500;700&family=Noto+Serif+KR:wght@600;700&display=swap" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <script type="module">
+    if (!("switch" in HTMLInputElement.prototype)) {
+      import("https://esm.sh/input-switch-polyfill").catch(() => {});
+    }
+  </script>
   <style>
     :root {
       color-scheme: dark;
@@ -15,6 +23,13 @@
       --text: #eef1f6;
       --muted: #98a2b3;
       --brand: #e17b8d;
+      --in-oklab: ;
+    }
+
+    @supports (background: linear-gradient(in oklab, white, black)) {
+      :root {
+        --in-oklab: in oklab;
+      }
     }
 
     * {
@@ -73,16 +88,71 @@
       }
     }
 
+    input[type="checkbox"][switch] {
+      accent-color: var(--brand);
+      margin: 0;
+      cursor: pointer;
+    }
+
+    input[type="checkbox"][switch]:focus-visible {
+      outline: 3px solid #fb7185;
+      outline-offset: 3px;
+    }
+
     /* Isolate 16:9 output video stage color-scheme independently */
     .video-stage {
       color-scheme: only dark;
       background: #0c0a0f;
       color: #f3efe9;
-      font-family: 'Noto Sans KR', 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+      font-family: 'Noto Sans KR', 'Noto Sans JP', 'Pretendard', 'Apple SD Gothic Neo', 'Malgun Gothic', sans-serif;
+      font-size-adjust: from-font;
     }
 
     .font-lyric-serif {
-      font-family: 'Noto Serif KR', Georgia, 'Times New Roman', serif;
+      font-family: 'Noto Serif KR', 'Noto Sans JP', Georgia, 'Times New Roman', serif;
+      font-size-adjust: from-font;
+    }
+
+    @supports not (font-size-adjust: from-font) {
+      .video-stage,
+      .font-lyric-serif {
+        line-height: 1.32;
+      }
+    }
+
+    progress.track-progress {
+      appearance: none;
+      border: 0 solid;
+      overflow: clip;
+      border-radius: 1e5px;
+      height: 4px;
+      width: 100%;
+      display: block;
+      background: rgba(255, 255, 255, 0.14);
+    }
+
+    progress.track-progress::-webkit-progress-bar {
+      background: transparent;
+    }
+
+    progress.track-progress::-webkit-progress-value {
+      background: var(--progress-bar-fill, #d88392);
+      border-radius: 1e5px;
+    }
+
+    progress.track-progress::-moz-progress-bar {
+      background: var(--progress-bar-fill, #d88392);
+      border-radius: 1e5px;
+    }
+
+    .vinyl-disc {
+      position: relative;
+      border-radius: 50%;
+      isolation: isolate;
+      background:
+        conic-gradient(from 40deg, rgba(255,255,255,0.12) 0deg, transparent 42deg, rgba(255,255,255,0.03) 140deg, rgba(255,255,255,0.14) 210deg, transparent 260deg, rgba(255,255,255,0.04) 360deg),
+        repeating-radial-gradient(circle at center, #18161d 0px, #18161d 2px, #100e14 3px, #100e14 5px);
+      border: 1px solid rgba(255,255,255,0.12);
     }
 
     /* Complex layout interaction isolation (60fps dragging/scrolling) */
@@ -159,6 +229,17 @@
     ::-webkit-scrollbar-thumb:hover {
       background: #434d66;
     }
+
+    dialog:modal {
+      overscroll-behavior: contain;
+    }
+
+    dialog::backdrop {
+      background: rgba(5, 7, 12, 0.72);
+      backdrop-filter: blur(4px);
+      overflow: hidden;
+      overscroll-behavior: contain;
+    }
   </style>
 </head>
 <body class="min-h-screen flex flex-col">
@@ -188,27 +269,7 @@
         </button>
       </div>
 
-      <button id="btn-reset-algo" type="button" title="수동 편집을 초기 알고리즘 박자 상태로 되돌립니다"
-        class="px-2.5 py-1.5 rounded bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/35 text-amber-200 font-medium cursor-pointer">
-        알고리즘 박자로 초기화
-      </button>
 
-      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
-        <span class="text-slate-400">BPM</span>
-        <input id="inp-bpm" type="number" step="0.1" min="40" max="240" class="w-16 bg-transparent text-white font-mono text-right focus:outline-none" />
-      </label>
-      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
-        <span class="text-slate-400">t0(s)</span>
-        <input id="inp-t0" type="number" step="0.01" min="0" max="30" class="w-16 bg-transparent text-white font-mono text-right focus:outline-none" />
-      </label>
-      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
-        <span class="text-slate-400">스타일</span>
-        <select id="sel-style" class="bg-transparent text-white focus:outline-none cursor-pointer">
-          <option value="minimal" class="bg-[#161922]">minimal</option>
-          <option value="editorial" class="bg-[#161922]">editorial</option>
-          <option value="classic2" class="bg-[#161922]">classic2</option>
-        </select>
-      </label>
       <button id="btn-save" type="button" class="px-3 py-1.5 rounded bg-[#252b3b] hover:bg-[#31394f] border border-[#3a435a] text-white font-medium cursor-pointer">
         저장 (score + timeline)
       </button>
@@ -227,21 +288,59 @@
     <section id="preview-pane" class="lg:col-span-7 flex flex-col gap-2.5 min-w-0">
       <!-- Preview Frame Controls + Fixed 16:9 Stage + Playback -->
       <div id="preview-card" class="rounded-xl overflow-hidden border border-[#2a3040] shadow-2xl bg-[#161922] w-full mx-auto transition-[max-width] duration-150">
-        <!-- Stage Size & Render Scale Bar -->
-        <div class="bg-[#161922] border-b border-[#2a3040] px-3 py-1.5 flex flex-wrap items-center justify-between gap-2 text-[11px]">
-          <div class="flex items-center gap-1.5">
-            <span class="text-slate-400 font-medium mr-1">미리보기 창 크기</span>
-            <button type="button" data-stage-size="sm" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">작게</button>
-            <button type="button" data-stage-size="md" class="stage-size-btn px-2 py-0.5 rounded border border-rose-400/50 bg-rose-500/20 text-rose-200 font-semibold cursor-pointer">기본</button>
-            <button type="button" data-stage-size="lg" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">크게</button>
-            <button type="button" data-stage-size="full" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">전체너비</button>
+        <details class="bg-[#161922] border-b border-[#2a3040] px-3 py-1.5 space-y-1.5 text-[11px]">
+          <summary class="py-1 cursor-pointer text-slate-200 font-semibold">영상 설정</summary>
+          <div class="flex flex-wrap items-center justify-between gap-2">
+      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
+        <span class="text-slate-400">스타일</span>
+        <select id="sel-style" class="bg-transparent text-white focus:outline-none cursor-pointer">
+          <option value="minimal" class="bg-[#161922]">minimal</option>
+          <option value="editorial" class="bg-[#161922]">editorial</option>
+          <option value="classic2" class="bg-[#161922]">classic2</option>
+          <option value="shorts" class="bg-[#161922]">shorts (9:16)</option>
+        </select>
+      </label>
+
+            <div class="flex items-center gap-1.5">
+              <span class="text-slate-400 font-medium mr-1">미리보기 창 크기</span>
+              <button type="button" data-stage-size="sm" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">작게</button>
+              <button type="button" data-stage-size="md" class="stage-size-btn px-2 py-0.5 rounded border border-rose-400/50 bg-rose-500/20 text-rose-200 font-semibold cursor-pointer">기본</button>
+              <button type="button" data-stage-size="lg" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">크게</button>
+              <button type="button" data-stage-size="full" class="stage-size-btn px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-300 cursor-pointer">전체너비</button>
+            </div>
+            <label class="inline-flex items-center gap-2 text-slate-300">
+              <span class="text-slate-400">영상 내부 비율 (MP4 동일 반영)</span>
+              <input id="rng-content-scale" type="range" min="0.88" max="1.34" step="0.01" value="1.18" class="w-24 cursor-pointer" />
+              <span id="lbl-content-scale" class="font-mono text-rose-300 w-9 text-right">118%</span>
+            </label>
           </div>
-          <label class="inline-flex items-center gap-2 text-slate-300">
-            <span class="text-slate-400">영상 내부 비율 (MP4 동일 반영)</span>
-            <input id="rng-content-scale" type="range" min="0.88" max="1.34" step="0.01" value="1.18" class="w-24 cursor-pointer" />
-            <span id="lbl-content-scale" class="font-mono text-rose-300 w-9 text-right">118%</span>
-          </label>
-        </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#222836] text-slate-300">
+            <div class="flex items-center gap-2">
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <span class="text-slate-400">강조색</span>
+                <input id="inp-accent-color" type="color" value="#d88392" class="w-6 h-5 rounded border border-[#2a3040] bg-transparent p-0 cursor-pointer" />
+              </label>
+              <button id="btn-reextract-accent" type="button" title="앨범 커버에서 대표 강조색을 다시 추출합니다"
+                class="px-2 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-200 cursor-pointer">
+                커버색 재추출
+              </button>
+            </div>
+          </div>
+          <div class="flex flex-wrap items-center justify-between gap-2 pt-1 border-t border-[#222836] text-slate-300">
+            <div class="flex flex-wrap items-center gap-1.5">
+              <span class="text-slate-400 font-medium">클립 구간(s)</span>
+              <input id="inp-clip-start" type="number" step="0.1" min="0" placeholder="시작"
+                class="w-16 rounded bg-[#10131a] border border-[#2a3040] px-1.5 py-0.5 text-white font-mono text-right focus:outline-none focus:border-rose-400" />
+              <span class="text-slate-500">~</span>
+              <input id="inp-clip-end" type="number" step="0.1" min="0" placeholder="끝"
+                class="w-16 rounded bg-[#10131a] border border-[#2a3040] px-1.5 py-0.5 text-white font-mono text-right focus:outline-none focus:border-rose-400" />
+              <button id="btn-clip-set-start" type="button" class="px-1.5 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-200 cursor-pointer">현위치→시작</button>
+              <button id="btn-clip-set-end" type="button" class="px-1.5 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-200 cursor-pointer">현위치→끝</button>
+              <button id="btn-clip-clear" type="button" class="px-1.5 py-0.5 rounded border border-[#2a3040] bg-[#1c202b] hover:bg-[#252b3b] text-slate-400 cursor-pointer">전체</button>
+            </div>
+            <span class="text-[10px] text-slate-500">비워두면 전체 곡 렌더링 · 쇼츠 하이라이트 클립에 유용</span>
+          </div>
+        </details>
 
         <!-- Live Fixed 1920x1080 Video Output Stage Scaled Cleanly -->
         <div id="video-stage-viewport" class="relative w-full aspect-video overflow-hidden bg-[#0c0a0f] select-none">
@@ -320,58 +419,75 @@
           </div>
         </div>
 
-        <!-- 4-Beat Tap Tempo & Beat Grid Re-Alignment Bar -->
+        <details class="mb-2">
+          <summary class="cursor-pointer text-xs font-semibold text-slate-200">박자 설정</summary>
         <div class="flex flex-wrap items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-[#121620] border border-[#242a38] text-[11px]">
           <div class="flex flex-wrap items-center gap-1.5">
-            <button id="btn-tap-beat" type="button" title="재생 중에 음악의 1·2·3·4박을 순서대로 4번 누르세요 (단축키: B)"
+            <div class="inline-flex items-center rounded border border-[#2a3040] bg-[#1c202b] overflow-hidden">
+              <span class="px-2 py-1 text-[10px] text-slate-400 border-r border-[#2a3040] select-none">1박 시작</span>
+              <button id="btn-shift-beat-prev" type="button" title="BPM은 유지하고 마디 시작(1박)을 1박 앞으로 당깁니다"
+                class="px-2 py-1 hover:bg-[#252b3b] text-slate-200 border-r border-[#2a3040] cursor-pointer">
+                ◀ -1박
+              </button>
+              <button id="btn-shift-beat-next" type="button" title="BPM은 유지하고 마디 시작(1박)을 1박 뒤로 밉니다"
+                class="px-2 py-1 hover:bg-[#252b3b] text-slate-200 cursor-pointer">
+                +1박 ▶
+              </button>
+            </div>
+            <button id="btn-tap-beat" type="button" title="BPM은 유지한 채 재생 중 1·2·3·4박을 눌러 박자 시작(1박) 위치를 맞춥니다 (단축키: B)"
               class="px-2.5 py-1 rounded bg-rose-600/80 hover:bg-rose-500 text-white font-semibold cursor-pointer">
-              4박 탭 (B · 0/4)
+              1박 탭 맞춤 (B · 0/4)
             </button>
-            <button id="btn-set-downbeat" type="button" title="현재 재생 헤드 위치를 마디의 1박(t0) 기준으로 맞춥니다"
+            <button id="btn-set-downbeat" type="button" title="재생 헤드에 가장 가까운 기존 박자를 마디의 1박으로 지정합니다"
               class="px-2.5 py-1 rounded bg-[#1c202b] hover:bg-[#252b3b] border border-[#2a3040] text-slate-200 cursor-pointer">
-              현 위치 = 1박(t0)
-            </button>
-            <button id="btn-requantize-now" type="button" title="현재 BPM과 t0 눈금에 맞춰 보컬 온셋 기준으로 가사를 다시 배치합니다"
-              class="px-2.5 py-1 rounded bg-sky-600/25 hover:bg-sky-600/40 border border-sky-400/40 text-sky-200 font-medium cursor-pointer">
-              보컬 기준 가사 재배치
+              가까운 박 → 1박
             </button>
           </div>
-          <label class="inline-flex items-center gap-1.5 text-slate-300">
-            <span class="text-slate-400">박자 변경 시</span>
-            <select id="sel-realign-mode" class="bg-[#1c202b] border border-[#2a3040] rounded px-1.5 py-0.5 text-slate-100 cursor-pointer">
-              <option value="vocals">자동 가사 재배치 (보컬 재정렬)</option>
-              <option value="preserve">현재 위치 유지 스냅</option>
-              <option value="grid_only">그리드만 이동 (마디/박 고정)</option>
-            </select>
-          </label>
+      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
+        <span class="text-slate-400">BPM</span>
+        <input id="inp-bpm" type="number" step="0.01" min="40" max="240" class="w-16 bg-transparent text-white font-mono text-right focus:outline-none" />
+      </label>
+      <label class="inline-flex items-center gap-1.5 bg-[#1c202b] border border-[#2a3040] rounded px-2 py-1">
+        <span class="text-slate-400">박자 위치(s)</span>
+        <input id="inp-t0" type="number" step="0.001" min="-2" max="30" class="w-16 bg-transparent text-white font-mono text-right focus:outline-none" />
+      </label>
+            <button id="btn-reset-algo" type="button" class="px-2 py-1 rounded bg-[#252b3b]"
+              title="현재 BPM과 가사 시각을 유지한 채 원곡의 박자 눈금과 마디 1박을 다시 찾습니다">자동 박자 다시 분석</button>
+            <button id="btn-beat-home" type="button" class="px-2 py-1 rounded bg-[#252b3b]">곡 처음</button>
+            <button id="btn-beat-loop" type="button" aria-pressed="false" class="px-2 py-1 rounded bg-[#252b3b]">4마디 반복</button>
+            <span id="beat-analysis-note" aria-live="polite" class="text-slate-400"></span>
         </div>
 
+        </details>
         <!-- Main Horizontal Bar/Beat Score Ruler + Blocks -->
-        <div id="score-scroll-wrap" class="isolated-panel relative overflow-x-auto overflow-y-hidden border border-[#2a3040] rounded-lg bg-[#10131a]" style="height: 112px;">
+        <div id="score-scroll-wrap" class="isolated-panel relative overflow-x-auto overflow-y-hidden border border-[#2a3040] rounded-lg bg-[#10131a]" style="height: 146px;">
           <div id="score-canvas-inner" class="relative h-full">
-            <div id="score-ruler" class="absolute inset-x-0 top-0 h-7 border-b border-[#242a38] pointer-events-none"></div>
-            <div id="score-blocks" class="absolute inset-x-0 top-7 bottom-0"></div>
+            <canvas id="score-waveform" class="absolute top-7 pointer-events-none" style="height:34px"></canvas>
+            <div id="score-ruler" class="absolute inset-x-0 top-0 border-b border-[#242a38] pointer-events-none" style="height:62px"></div>
+            <div id="score-blocks" class="absolute inset-x-0 bottom-0" style="top:63px"></div>
             <div id="score-playhead" class="absolute top-0 bottom-0 w-0.5 bg-rose-400 pointer-events-none z-30 shadow-[0_0_8px_rgba(251,113,133,0.85)]"></div>
           </div>
         </div>
 
         <!-- Selected Line Intra-Line Word Timing Score (0.25-beat resolution) -->
-        <div class="border-t border-[#2a3040] pt-2.5 space-y-2">
+        <div id="word-editor" class="border-t border-[#2a3040] pt-2.5 space-y-2">
           <div class="flex flex-wrap items-center justify-between gap-2 text-xs">
             <div class="flex items-center gap-2">
               <span id="lbl-word-header" class="font-semibold text-sky-300">선택 줄 내부 단어 박자 (0.25박 단위)</span>
-              <span class="text-[11px] text-slate-400">우클릭 드래그로 좌우 스크롤 · 우클릭 블록 전환</span>
+              <span class="text-[11px] text-slate-400">Ctrl+클릭 개별 · Shift+클릭 범위 · 우클릭 드래그 스크롤</span>
             </div>
-            <div class="flex items-center gap-1.5">
+            <div class="flex flex-wrap items-center gap-1.5">
               <button id="btn-word-back" type="button" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer">단어 ◀ -0.25박</button>
               <button id="btn-word-fwd" type="button" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer">단어 +0.25박 ▶</button>
               <button id="btn-word-dur-short" type="button" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer">길이 -0.25</button>
               <button id="btn-word-dur-long" type="button" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer">길이 +0.25</button>
-              <button id="btn-word-even" type="button" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer text-slate-300">단어 균등 분배</button>
+              <button id="btn-align-words-selected" type="button" title="선택한 가사 줄의 시작·끝을 유지하고 내부 단어만 정렬"
+                class="px-2 py-1 rounded border border-sky-400/40 bg-[#1c202b] hover:bg-[#252b3b] text-sky-200 disabled:opacity-40">선택 줄 단어 보컬 정렬</button>
+              <button id="btn-word-even" type="button" title="선택 줄 내 전체 단어를 균등 분배" class="px-2 py-1 rounded bg-[#1c202b] border border-[#2a3040] hover:bg-[#252b3b] disabled:opacity-40 cursor-pointer text-slate-300">단어 균등 분배</button>
             </div>
           </div>
 
-          <div id="word-lane-wrap" class="isolated-panel relative overflow-x-auto overflow-y-hidden border border-[#2a3040] rounded-lg bg-[#10131a]" style="height: 68px;">
+          <div id="word-lane-wrap" tabindex="0" aria-label="줄 내부 단어 박자" class="isolated-panel relative overflow-x-auto overflow-y-hidden border border-[#2a3040] rounded-lg bg-[#10131a]" style="height: 68px;">
             <div id="word-lane-inner" class="relative h-full min-w-full">
               <div id="word-ruler" class="absolute inset-x-0 top-0 h-5 border-b border-[#242a38] pointer-events-none"></div>
               <div id="word-blocks" class="absolute inset-x-0 top-5 bottom-0"></div>
@@ -387,6 +503,52 @@
 
     <!-- Right Column: Selected Line Nudge Controls + ID-Separated Lyric List -->
     <aside id="editor-pane" class="lg:col-span-5 flex flex-col gap-2.5 min-h-0">
+      <details class="rounded-lg border border-[#2a3040] bg-[#161922] px-3 py-2 text-xs text-slate-200">
+        <summary class="cursor-pointer font-semibold">가사 표시 설정</summary>
+        <div class="mt-2">
+            <div class="flex flex-wrap items-center gap-3">
+              <label id="lbl-karaoke-sweep" class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-karaoke-sweep" type="checkbox" switch checked />
+                <span>가라오케 스윕</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-word-highlight" type="checkbox" switch checked />
+                <span>단어 강조</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-show-pron" type="checkbox" switch checked />
+                <span>발음</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-show-comment" type="checkbox" switch checked />
+                <span>학습 노트</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-smooth-scroll" type="checkbox" switch checked />
+                <span>부드러운 줄 스크롤</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-word-lift" type="checkbox" switch checked />
+                <span>단어 들뜸</span>
+              </label>
+              <label class="inline-flex items-center gap-1.5 cursor-pointer">
+                <input id="chk-song-context" type="checkbox" switch checked />
+                <span>곡 해설과 문화</span>
+              </label>
+            </div>
+        </div>
+      </details>
+      <div class="flex flex-wrap gap-2 text-xs">
+            <button id="btn-requantize-now" type="button" title="현재 박자에 맞춰 수동 수정하지 않은 줄의 시작과 끝을 계산합니다"
+              class="px-2.5 py-1 rounded bg-sky-600/25 hover:bg-sky-600/40 border border-sky-400/40 text-sky-200 font-medium cursor-pointer">
+              가사 줄 경계 맞춤
+            </button>
+            <button id="btn-align-words-all" type="button"
+              class="px-2.5 py-1 rounded border border-sky-400/40 bg-[#1c202b] hover:bg-[#252b3b] text-sky-200 disabled:opacity-40">
+              전체 줄 단어 보컬 정렬
+            </button>
+      </div>
+      <p id="word-alignment-review" hidden class="text-xs text-amber-200" role="status"></p>
       <!-- Selected Line Quick Beat & Text Controls -->
       <div class="bg-[#161922] border border-[#2a3040] rounded-xl p-3 space-y-2.5">
         <div class="flex flex-wrap items-center justify-between gap-2">
@@ -439,7 +601,8 @@
   <audio id="audio-el" preload="auto"></audio>
 
   <script>
-    const SCROLL_DURATION_SEC = 0.28;
+    const SCROLL_DURATION_SEC = 0.42;
+    const LINE_FADE_SEC = 0.18;
     const ITEM_HEIGHT_1080 = 210;
     const MAX_HISTORY = 60;
     const TRACK_SLUG = new URLSearchParams(window.location.search).get("track") || "";
@@ -463,29 +626,49 @@
       selectedLineId: 0,
       selectedLineIds: new Set(),
       lastClickedLineId: null,
+      aligningWords: false,
       selectedWordIdx: 0,
+      selectedWordIndices: new Set([0]),
+      wordSelectionAnchor: 0,
       tapBeats: [],
       pxPerBeat: 46,
       playing: false,
       currentTime: 0,
       dirty: false,
-      lastMetronomeBeat: -999,
+      waveform: null,
+      beatLoop: null,
       audioCtx: null,
       style: "minimal",
       stageSize: "md",
       contentScale: 1.18,
+      karaokeSweep: true,
+      showWordHighlight: true,
+      showPronunciation: true,
+      showComment: true,
+      showSongContext: true,
+      lyricWordLift: true,
+      smoothLyricScroll: true,
+      accentColor: "#d88392",
+      layoutMetrics: null,
       undoStack: [],
       redoStack: [],
       previewRows: [],
       lastBuiltStyle: null,
       lastBuiltScale: null,
       textEditSnapshot: null,
+      colorEditSnapshot: null,
     };
 
     const audioEl = document.getElementById("audio-el");
     const scrubber = document.getElementById("scrubber");
     const rngContentScale = document.getElementById("rng-content-scale");
     const lblContentScale = document.getElementById("lbl-content-scale");
+    const chkKaraokeSweep = document.getElementById("chk-karaoke-sweep");
+    const lblKaraokeSweep = document.getElementById("lbl-karaoke-sweep");
+    const chkWordHighlight = document.getElementById("chk-word-highlight");
+    const chkShowPron = document.getElementById("chk-show-pron");
+    const chkShowComment = document.getElementById("chk-show-comment");
+    const inpAccentColor = document.getElementById("inp-accent-color");
     const lblTime = document.getElementById("lbl-time");
     const btnPlay = document.getElementById("btn-play");
     const btnUndo = document.getElementById("btn-undo");
@@ -498,6 +681,124 @@
     const virtualStage = document.getElementById("stage-virtual-1080");
     const stageContent = document.getElementById("stage-content");
     const stageWash = document.getElementById("stage-wash");
+
+    function syncDisplayControlsFromMeta(meta = {}, fallback = {}) {
+      appState.style = meta.style || fallback.style || "minimal";
+      appState.contentScale = Number(meta.content_scale ?? fallback.contentScale ?? 1.18);
+      appState.karaokeSweep = meta.karaoke_sweep ?? fallback.karaokeSweep ?? true;
+      appState.showWordHighlight = meta.show_word_highlight ?? fallback.showWordHighlight ?? true;
+      appState.showPronunciation = meta.show_pronunciation ?? fallback.showPronunciation ?? true;
+      appState.smoothLyricScroll = meta.smooth_lyric_scroll ?? fallback.smoothLyricScroll ?? true;
+      appState.lyricWordLift = meta.lyric_word_lift ?? fallback.lyricWordLift ?? true;
+      appState.showSongContext = meta.show_song_context ?? fallback.showSongContext ?? true;
+      appState.showComment = meta.show_comment ?? fallback.showComment ?? true;
+      appState.accentColor = /^#[0-9a-fA-F]{6}$/.test(String(meta.accent_color || ""))
+        ? String(meta.accent_color).toLowerCase()
+        : (fallback.accentColor || "#d88392");
+
+      document.getElementById("sel-style").value = appState.style;
+      rngContentScale.value = appState.contentScale;
+      lblContentScale.textContent = `${Math.round(appState.contentScale * 100)}%`;
+      syncRangeFallbackProgress(rngContentScale);
+
+      chkKaraokeSweep.checked = Boolean(appState.karaokeSweep);
+      chkWordHighlight.checked = Boolean(appState.showWordHighlight);
+      chkShowPron.checked = Boolean(appState.showPronunciation);
+      document.getElementById("chk-smooth-scroll").checked = appState.smoothLyricScroll;
+      document.getElementById("chk-word-lift").checked = appState.lyricWordLift;
+      document.getElementById("chk-song-context").checked = appState.showSongContext;
+      chkShowComment.checked = Boolean(appState.showComment);
+      inpAccentColor.value = appState.accentColor;
+
+      chkKaraokeSweep.disabled = !appState.showWordHighlight;
+      lblKaraokeSweep.classList.toggle("opacity-45", !appState.showWordHighlight);
+      lblKaraokeSweep.classList.toggle("cursor-not-allowed", !appState.showWordHighlight);
+    }
+
+    function applyDisplayMetaToScoreMeta() {
+      if (!appState.score) return;
+      appState.score.meta = appState.score.meta || {};
+      appState.score.meta.style = appState.style;
+      appState.score.meta.content_scale = appState.contentScale;
+      appState.score.meta.karaoke_sweep = appState.karaokeSweep;
+      appState.score.meta.show_word_highlight = appState.showWordHighlight;
+      appState.score.meta.show_pronunciation = appState.showPronunciation;
+      appState.score.meta.smooth_lyric_scroll = appState.smoothLyricScroll;
+      appState.score.meta.lyric_word_lift = appState.lyricWordLift;
+      appState.score.meta.show_song_context = appState.showSongContext;
+      appState.score.meta.show_comment = appState.showComment;
+      appState.score.meta.accent_color = appState.accentColor;
+    }
+
+    function syncWordsWithOriginal(line, newOriginal) {
+      const tokens = String(newOriginal || "").trim().split(/\s+/).filter(Boolean);
+      if (!tokens.length) {
+        line.words = [];
+        return;
+      }
+      const oldWords = Array.isArray(line.words) ? line.words : [];
+      if (oldWords.length === tokens.length) {
+        line.words = oldWords.map((w, i) => ({ ...w, text: tokens[i] }));
+        return;
+      }
+
+      const durB = Math.max(0.5, Number(line.duration_beats || 1));
+      let spanStart = 0;
+      let spanEnd = durB;
+      if (oldWords.length > 0) {
+        const candStart = Math.max(0, Math.min(durB - 0.25, Number(oldWords[0].rel_beat || 0)));
+        const lastW = oldWords[oldWords.length - 1];
+        const candEnd = Math.min(
+          durB,
+          Math.max(candStart + 0.25, Number(lastW.rel_beat || 0) + Number(lastW.duration_beats || 0.25))
+        );
+        if (candEnd - candStart >= 0.25) {
+          spanStart = candStart;
+          spanEnd = candEnd;
+        }
+      }
+
+      const span = Math.max(0.25, spanEnd - spanStart);
+      let minStep = 0.25;
+      let quantFactor = 4;
+      if (tokens.length * 0.25 > span) {
+        if (tokens.length * 0.125 <= span) {
+          minStep = 0.125;
+          quantFactor = 8;
+        } else {
+          minStep = Math.max(0.02, span / tokens.length);
+          quantFactor = 1000;
+        }
+      }
+
+      const totalChars = tokens.reduce((acc, tok) => acc + Math.max(1, tok.length), 0);
+      let cursor = spanStart;
+      const nextWords = [];
+      for (let i = 0; i < tokens.length; i++) {
+        const tok = tokens[i];
+        const remaining = tokens.length - i - 1;
+        const weight = Math.max(1, tok.length) / totalChars;
+        const qRel = Math.round(cursor * quantFactor) / quantFactor;
+        const maxRel = Math.max(0, durB - (remaining + 1) * minStep);
+        const minRel = nextWords.length ? nextWords[nextWords.length - 1].rel_beat + minStep : 0;
+        const relBeat = Number(Math.max(minRel, Math.min(maxRel, qRel)).toFixed(3));
+
+        const rawNextCursor = cursor + span * weight;
+        const rawEnd = (i === tokens.length - 1) ? spanEnd : rawNextCursor;
+        let qEnd = Math.round(rawEnd * quantFactor) / quantFactor;
+        const maxEnd = Math.max(relBeat + minStep, durB - remaining * minStep);
+        qEnd = Math.max(relBeat + minStep, Math.min(maxEnd, qEnd));
+        const wDur = Number(Math.max(minStep, qEnd - relBeat).toFixed(3));
+
+        nextWords.push({
+          text: tok,
+          rel_beat: relBeat,
+          duration_beats: wDur,
+        });
+        cursor = rawNextCursor;
+      }
+      line.words = nextWords;
+    }
 
     function setStatus(msg, isError = false) {
       statusMsg.textContent = msg;
@@ -523,11 +824,16 @@
       inputEl.style.setProperty("--progress", `${Math.max(0, Math.min(100, pct)).toFixed(1)}%`);
     }
 
-    // Scale virtual 1920x1080 canvas smoothly to any viewport width while keeping aspect proportions 100% locked
+    // Scale virtual 1920x1080 (or 1080x1920 for shorts) canvas smoothly while keeping proportions 100% locked
     function fitVirtualStage() {
+      const isShorts = appState.style === "shorts";
+      const baseW = isShorts ? 1080 : 1920;
+      const baseH = isShorts ? 1920 : 1080;
+      virtualStage.style.width = `${baseW}px`;
+      virtualStage.style.height = `${baseH}px`;
       const vw = stageViewport.clientWidth;
       if (vw > 0) {
-        const s = vw / 1920;
+        const s = vw / baseW;
         virtualStage.style.transform = `scale(${s})`;
       }
     }
@@ -536,6 +842,7 @@
 
     function setStageSizePreset(preset) {
       appState.stageSize = preset;
+      const isShorts = appState.style === "shorts";
       const previewPane = document.getElementById("preview-pane");
       const editorPane = document.getElementById("editor-pane");
       const previewCard = document.getElementById("preview-card");
@@ -560,6 +867,17 @@
       };
       previewCard.style.maxWidth = maxWidths[preset] || "820px";
 
+      if (isShorts) {
+        const shortsWidths = { sm: "250px", md: "310px", lg: "380px", full: "440px" };
+        stageViewport.style.aspectRatio = "9 / 16";
+        stageViewport.style.maxWidth = shortsWidths[preset] || "310px";
+        stageViewport.style.margin = "0 auto";
+      } else {
+        stageViewport.style.aspectRatio = "16 / 9";
+        stageViewport.style.maxWidth = "";
+        stageViewport.style.margin = "";
+      }
+
       document.querySelectorAll(".stage-size-btn").forEach((btn) => {
         const active = btn.dataset.stageSize === preset;
         btn.className = active
@@ -579,8 +897,18 @@
         scoreJson: JSON.stringify(appState.score),
         selectedLineId: appState.selectedLineId,
         selectedWordIdx: appState.selectedWordIdx,
+        selectedWordIndices: Array.from(appState.selectedWordIndices),
+        wordSelectionAnchor: appState.wordSelectionAnchor,
         style: appState.style,
         contentScale: appState.contentScale,
+        karaokeSweep: appState.karaokeSweep,
+        showWordHighlight: appState.showWordHighlight,
+        showPronunciation: appState.showPronunciation,
+        showComment: appState.showComment,
+        showSongContext: appState.showSongContext,
+        lyricWordLift: appState.lyricWordLift,
+        smoothLyricScroll: appState.smoothLyricScroll,
+        accentColor: appState.accentColor,
       };
     }
 
@@ -601,22 +929,22 @@
     }
 
     function applySnapshot(snap) {
+      resetMetronome();
       appState.score = JSON.parse(snap.scoreJson);
       appState.selectedLineId = snap.selectedLineId;
       appState.selectedLineIds = new Set([snap.selectedLineId]);
       appState.selectedWordIdx = snap.selectedWordIdx;
-      appState.style = appState.score.meta?.style || snap.style || "minimal";
-      appState.contentScale = Number(appState.score.meta?.content_scale ?? snap.contentScale ?? 1.18);
+      appState.selectedWordIndices = new Set(snap.selectedWordIndices);
+      appState.wordSelectionAnchor = snap.wordSelectionAnchor;
+      syncDisplayControlsFromMeta(appState.score.meta || {}, snap);
+      applyDisplayMetaToScoreMeta();
 
       document.getElementById("inp-bpm").value = appState.score.grid.bpm;
       document.getElementById("inp-t0").value = appState.score.grid.t0;
-      document.getElementById("sel-style").value = appState.style;
-      rngContentScale.value = appState.contentScale;
-      lblContentScale.textContent = `${Math.round(appState.contentScale * 100)}%`;
-      syncRangeFallbackProgress(rngContentScale);
 
       appState.dirty = true;
       recomputeTimelineFromScore();
+      setStageSizePreset(appState.stageSize);
       buildVideoPreviewSkeleton();
       refreshAllViews(true);
       updateHistoryButtons();
@@ -625,6 +953,7 @@
     function performUndo() {
       if (!appState.undoStack.length) return;
       appState.redoStack.push(captureSnapshot());
+      resetMetronome();
       const prev = appState.undoStack.pop();
       applySnapshot(prev);
       setStatus("실행 취소됨 (저장 전)");
@@ -633,6 +962,7 @@
     function performRedo() {
       if (!appState.redoStack.length) return;
       appState.undoStack.push(captureSnapshot());
+      resetMetronome();
       const next = appState.redoStack.pop();
       applySnapshot(next);
       setStatus("다시 실행됨 (저장 전)");
@@ -648,22 +978,32 @@
       const beatSec = 60.0 / bpm;
 
       const compiledLines = [];
+      const preciseIds = new Set(score.lines.filter(line => line.word_alignment === "ctc").map(line => line.id));
       for (const ln of score.lines) {
         const totalBeats = (ln.bar - 1) * bpb + (ln.beat - 1.0);
-        const start = Number((t0 + totalBeats * beatSec).toFixed(3));
-        const end = Number((t0 + (totalBeats + ln.duration_beats) * beatSec).toFixed(3));
+        const rawStart = t0 + totalBeats * beatSec;
+        const start = Number(Math.max(0, rawStart).toFixed(3));
+        const end = Number(Math.max(start + 0.001, rawStart + ln.duration_beats * beatSec).toFixed(3));
         ln.start = start;
         ln.end = end;
 
         const wordsOut = [];
         const rawWords = ln.words || [];
+        const minimumWord = preciseIds.has(ln.id) ? 0.001 : 0.04;
         if (rawWords.length > 0) {
           for (const w of rawWords) {
-            const ws = Number(Math.min(end - 0.04, start + Number(w.rel_beat || 0) * beatSec).toFixed(3));
-            let we = Number(Math.min(end, start + (Number(w.rel_beat || 0) + Number(w.duration_beats || 0.25)) * beatSec).toFixed(3));
-            if (we <= ws) we = Number(Math.min(end, ws + 0.04).toFixed(3));
+            const ws = Number(Math.max(start, Math.min(end - minimumWord, rawStart + Number(w.rel_beat || 0) * beatSec)).toFixed(3));
+            let we = Number(Math.min(end, rawStart + (Number(w.rel_beat || 0) + Number(w.duration_beats || 0.25)) * beatSec).toFixed(3));
+            if (we <= ws) we = Number(Math.min(end, ws + minimumWord).toFixed(3));
             wordsOut.push({ text: w.text, start: ws, end: Math.max(ws, we) });
           }
+        } else {
+          const tokens = ln.original.trim() ? ln.original.trim().split(/\s+/) : [];
+          const step = (end - start) / Math.max(1, tokens.length);
+          tokens.forEach((text, index) => {
+            wordsOut.push({ text, start: Number((start + index * step).toFixed(3)),
+              end: Number((start + (index + 1) * step).toFixed(3)) });
+          });
         }
         compiledLines.push({
           id: ln.id,
@@ -675,12 +1015,36 @@
           pronunciation: ln.pronunciation || "",
           translation: ln.translation || "",
           comment: ln.comment || null,
+          culture_note: ln.culture_note || null,
         });
       }
 
       compiledLines.sort((a, b) => (a.start - b.start) || (a.id - b.id));
+      for (let i = 1; i < compiledLines.length; i++) {
+        const prev = compiledLines[i - 1], cur = compiledLines[i];
+        if (prev.start < cur.start && cur.start < prev.end) {
+          prev.end = cur.start;
+          const minimumWord = preciseIds.has(prev.id) ? 0.001 : 0.04;
+          for (const word of prev.words) {
+            word.start = Math.min(word.start, Math.max(prev.start, prev.end - minimumWord));
+            word.end = Math.min(word.end, prev.end);
+          }
+        }
+      }
       appState.timeline = {
-        meta: { ...(score.meta || {}), style: appState.style, content_scale: appState.contentScale },
+        meta: {
+          ...(score.meta || {}),
+          style: appState.style,
+          content_scale: appState.contentScale,
+          accent_color: appState.accentColor,
+          karaoke_sweep: appState.karaokeSweep,
+          show_word_highlight: appState.showWordHighlight,
+          show_pronunciation: appState.showPronunciation,
+          show_comment: appState.showComment,
+          show_song_context: appState.showSongContext,
+          lyric_word_lift: appState.lyricWordLift,
+          smooth_lyric_scroll: appState.smoothLyricScroll,
+        },
         lines: compiledLines,
       };
     }
@@ -714,14 +1078,100 @@
       return (ln.bar - 1) * bpb + (ln.beat - 1.0);
     }
 
-    function setLineStartFromTotalBeats(ln, totalBeats) {
-      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
-      const clamped = Math.max(0, Math.round(totalBeats * 2) / 2);
-      ln.bar = 1 + Math.floor(clamped / bpb);
-      ln.beat = Number((1.0 + (clamped % bpb)).toFixed(2));
+    function gridPosition() {
+      const { bpm, t0, time_signature, downbeat_offset } = appState.score.grid;
+      const period = 60 / bpm;
+      const beatsPerBar = time_signature?.[0] || 4;
+      const firstBeat = -t0 / period;
+      const offset = modulo(Number(downbeat_offset) || 0, beatsPerBar);
+      const firstDownbeat = offset + beatsPerBar * Math.ceil((firstBeat - offset - 1e-8) / beatsPerBar);
+      return { period, t0, beatsPerBar, offset, firstDownbeat, firstBeat };
     }
 
-    // Match renderer/src/utils/timing.ts pre-arrival easing 1:1
+    function modulo(value, divisor) {
+      return ((value % divisor) + divisor) % divisor;
+    }
+
+    function musicalPosition(beat) {
+      const { firstDownbeat, beatsPerBar } = gridPosition();
+      const relative = beat - firstDownbeat;
+      return { bar: 1 + Math.floor(relative / beatsPerBar), beat: 1 + modulo(relative, beatsPerBar) };
+    }
+
+    function formatBarBeat(beat) {
+      const position = musicalPosition(beat);
+      return "Bar " + position.bar + " · Beat " + (Math.floor(position.beat * 10 + 1e-8) / 10).toFixed(1);
+    }
+
+    function setLineStartFromTotalBeats(line, beat) {
+      const bpb = appState.score.grid.time_signature?.[0] || 4;
+      const barIndex = Math.floor(beat / bpb);
+      line.bar = 1 + barIndex;
+      line.beat = 1 + (beat - barIndex * bpb);
+    }
+
+    // Match renderer/src/utils/timing.ts 1:1
+    function formatClock(sec) {
+      const safe = Math.max(0, Math.floor(sec || 0));
+      const mins = Math.floor(safe / 60);
+      const rem = safe % 60;
+      return `${mins}:${String(rem).padStart(2, "0")}`;
+    }
+
+    function estimateVisualUnits(text) {
+      let units = 0;
+      for (let i = 0; i < text.length; i++) {
+        const code = text.charCodeAt(i);
+        if (code >= 0x1100) units += 1.75;
+        else if (code >= 65 && code <= 90) units += 1.08;
+        else units += 0.95;
+      }
+      return units;
+    }
+
+    function computeLineLayoutMetrics(lines, opts) {
+      const { stylePreset, showPronunciation, contentScale } = opts;
+      const scale = Math.max(0.85, Math.min(1.4, contentScale || 1.18));
+      const cfg =
+        stylePreset === "editorial"
+          ? { colWidthPx: Math.max(400, (1920 / scale - 192) * 0.63 - 64 - 56), origPx: 32, origLh: 1.3, pronPx: 19, pronLh: 1.35, transPx: 23, transLh: 1.34, vertPad: 58, minHeight: 144 }
+          : stylePreset === "classic2"
+            ? { colWidthPx: Math.max(400, (1920 / scale - 192) * 0.62 - 64 - 56), origPx: 34, origLh: 1.3, pronPx: 19, pronLh: 1.35, transPx: 23, transLh: 1.34, vertPad: 62, minHeight: 148 }
+            : stylePreset === "shorts"
+              ? { colWidthPx: Math.max(480, 1080 / scale - 68 - 96 - 24), origPx: 42, origLh: 1.26, pronPx: 23, pronLh: 1.35, transPx: 28, transLh: 1.34, vertPad: 56, minHeight: 164 }
+              : { colWidthPx: Math.max(420, (1920 / scale - 216) * 0.65 - 80 - 24), origPx: 34, origLh: 1.26, pronPx: 19, pronLh: 1.35, transPx: 24, transLh: 1.34, vertPad: 44, minHeight: 132 };
+
+      const wrappedLines = (text, fontPx) => {
+        const clean = (text || "").trim();
+        if (!clean) return 0;
+        const charsPerLine = Math.max(10, cfg.colWidthPx / (fontPx * 0.56));
+        return Math.max(1, Math.ceil((estimateVisualUnits(clean) * 1.08) / charsPerLine));
+      };
+
+      const heights = [];
+      const tops = [];
+      const centers = [];
+      let cursor = 0;
+
+      for (let i = 0; i < lines.length; i++) {
+        const ln = lines[i];
+        const origRows = wrappedLines(ln.original, cfg.origPx);
+        const pronRows = showPronunciation ? wrappedLines(ln.pronunciation, cfg.pronPx) : 0;
+        const transRows = wrappedLines(ln.translation, cfg.transPx);
+        const rawH =
+          origRows * cfg.origPx * cfg.origLh +
+          (pronRows > 0 ? 7 + pronRows * cfg.pronPx * cfg.pronLh : 0) +
+          (transRows > 0 ? 6 + transRows * cfg.transPx * cfg.transLh : 0) +
+          cfg.vertPad;
+        const h = Math.max(cfg.minHeight, Math.ceil(rawH));
+        heights.push(h);
+        tops.push(cursor);
+        centers.push(cursor + h / 2);
+        cursor += h;
+      }
+      return { heights, tops, centers, totalHeight: cursor };
+    }
+
     function findActiveLineIndex(lines, t) {
       for (let i = 0; i < lines.length; i++) {
         if (t >= lines[i].start && t < lines[i].end) return i;
@@ -729,26 +1179,87 @@
       return -1;
     }
 
-    function findScrollTargetIndex(lines, t) {
-      if (!lines.length) return 0;
-      const eff = t + SCROLL_DURATION_SEC;
-      if (eff < lines[0].start) return 0;
-      for (let i = 0; i < lines.length; i++) {
-        if (eff >= lines[i].start && eff < lines[i].end) return i;
-        if (i + 1 < lines.length && eff >= lines[i].end && eff < lines[i + 1].start) return i;
-      }
-      return lines.length - 1;
+    // Keep scroll transitions in sync with renderer/src/utils/timing.ts.
+    function scrollStart(lines, index, lead = SCROLL_DURATION_SEC) {
+      return Math.max(0, lines[index - 1].start, lines[index].start - lead);
     }
 
-    function computeSmoothLineOffset(lines, targetIdx, t) {
-      if (targetIdx <= 0 || !lines.length) return 0;
-      const prevIdx = targetIdx - 1;
-      const arriveTime = lines[targetIdx].start;
-      const startTime = Math.max(0, arriveTime - SCROLL_DURATION_SEC);
-      const span = Math.max(0.001, arriveTime - startTime);
-      const u = Math.max(0, Math.min(1, (t - startTime) / span));
-      const progress = 1 - Math.pow(1 - u, 3);
-      return prevIdx + progress;
+    function findScrollTargetIndex(lines, t, lead = SCROLL_DURATION_SEC) {
+      let lower = 1;
+      let upper = lines.length;
+      while (lower < upper) {
+        const mid = Math.floor((lower + upper) / 2);
+        if (t >= scrollStart(lines, mid, lead)) lower = mid + 1;
+        else upper = mid;
+      }
+      return lower - 1;
+    }
+
+    function computeSmoothScrollY(lines, centers, targetIdx, t) {
+      if (!lines.length || !centers.length) return 0;
+      if (targetIdx <= 0) return centers[0];
+      const index = Math.min(targetIdx, centers.length - 1);
+      const previous = centers[index - 1];
+      const target = centers[index];
+      const start = scrollStart(lines, index);
+      const end = lines[index].start;
+      if (t >= end) return target;
+      const u = Math.max(0, (t - start) / Math.max(0.001, end - start));
+      return previous + (target - previous) * u * u * (3 - 2 * u);
+    }
+
+    function computeBassEnergy(spectrum, frameIdx) {
+      if (!spectrum || !spectrum.frames || !spectrum.frames.length) return 0;
+      const safe = Math.min(Math.max(0, frameIdx), spectrum.frames.length - 1);
+      const bars = spectrum.frames[safe];
+      if (!bars || !bars.length) return 0;
+      const count = Math.min(4, bars.length);
+      let sum = 0;
+      for (let i = 0; i < count; i++) sum += Number(bars[i] || 0);
+      return Math.max(0, Math.min(1, sum / count));
+    }
+
+    function computeLineActivation(line, t, fadeSec = LINE_FADE_SEC) {
+      const halfFade = fadeSec * 0.5;
+      const inStart = line.start - halfFade;
+      const inEnd = Math.min(line.end, line.start + halfFade);
+      const outStart = line.end;
+      const outEnd = line.end + fadeSec;
+
+      if (t <= inStart || t >= outEnd) return 0;
+      if (t < inEnd) {
+        const u = Math.max(0, Math.min(1, (t - inStart) / Math.max(0.001, inEnd - inStart)));
+        return 1 - Math.pow(1 - u, 3);
+      }
+      if (t <= outStart) return 1;
+      const u = Math.max(0, Math.min(1, (t - outStart) / Math.max(0.001, outEnd - outStart)));
+      return 1 - (1 - Math.pow(1 - u, 3));
+    }
+
+    function resetWordSpanStyles(sp) {
+      sp.style.backgroundImage = "";
+      sp.style.webkitBackgroundClip = "";
+      sp.style.backgroundClip = "";
+      sp.style.color = "";
+      sp.style.webkitTextFillColor = "";
+      sp.style.transform = "";
+      sp.style.filter = "";
+    }
+
+    function hasSongNotes(timeline) {
+      return Boolean(timeline.meta?.song_context?.meaning || timeline.meta?.song_context?.culture ||
+        timeline.lines.some(line => line.culture_note));
+    }
+
+    function findSongNote(lines, activeIdx, context, time) {
+      const active = lines[activeIdx];
+      const instrumental = !active || active.original.startsWith("♪");
+      if ((time < 3 || instrumental) && (context?.meaning || context?.culture)) {
+        return { tag: "곡 해설", phrase: context.meaning || "", meaning: context.culture || "" };
+      }
+      return active?.culture_note
+        ? { tag: "구절 해설", phrase: "", meaning: active.culture_note }
+        : null;
     }
 
     function findActiveComment(lines, t) {
@@ -758,75 +1269,182 @@
         for (let i = activeIdx; i >= 0; i--) {
           if (lines[i].comment) return lines[i].comment;
         }
+        return null;
       }
       let lastFin = -1;
       for (let i = 0; i < lines.length; i++) {
         if (lines[i].end <= t) lastFin = i;
       }
-      for (let i = Math.max(0, lastFin); i >= 0; i--) {
+      if (lastFin < 0) {
+        return lines[0].comment || null;
+      }
+      for (let i = lastFin; i >= 0; i--) {
         if (lines[i].comment) return lines[i].comment;
       }
       return null;
     }
 
-    // Build 1920x1080 Video Output Skeleton + Cached Lyric Rows (never rebuilt during playback frames)
+    function renderTrackProgressBarHtml(duration, accent, widthStyle = "100%") {
+      return `
+        <div style="width:${widthStyle}; display:flex; flex-direction:column; gap:6px;">
+          <progress id="preview-progress" class="track-progress" value="0" max="${duration}" aria-label="Track progress" style="--progress-bar-fill:${accent};"></progress>
+          <div style="display:flex; justify-content:space-between; font-size:12px; font-weight:500; font-variant-numeric:tabular-nums; color:#9f9690;">
+            <span id="preview-elapsed">0:00</span>
+            <span id="preview-total">${formatClock(duration)}</span>
+          </div>
+        </div>
+      `;
+    }
+
+    // Build 1920x1080 (or 1080x1920) Video Output Skeleton + Cached Lyric Rows
     function buildVideoPreviewSkeleton() {
       if (!appState.timeline) return;
       const meta = appState.timeline.meta || {};
-      const accent = meta.accent_color || "#d88392";
-      const contentScale = Math.max(0.85, Math.min(1.4, Number(appState.contentScale || meta.content_scale || 1.18)));
-      stageWash.style.background = `radial-gradient(circle at 28% 45%, ${accent}33, transparent 54%), radial-gradient(circle at 72% 58%, rgba(56, 72, 115, 0.18), transparent 56%)`;
-
+      const accent = meta.accent_color || appState.accentColor || "#d88392";
+      const duration = Math.max(0.1, Number(meta.duration || 1));
       const isEditorial = appState.style === "editorial";
       const isClassic = appState.style === "classic2";
-      const isMinimal = appState.style === "minimal";
-      const coverSize = isEditorial ? 128 : isClassic ? 260 : 320;
-      const specW = isMinimal ? 300 : isEditorial ? 400 : 320;
-      const specH = isMinimal ? 38 : 48;
+      const isShorts = appState.style === "shorts";
+
+      const rawScale = Number(appState.contentScale || meta.content_scale || 1.18);
+      const effectiveScale = isShorts
+        ? Math.max(0.88, Math.min(1.12, rawScale * 0.88))
+        : Math.max(0.85, Math.min(1.4, rawScale));
+
+      stageWash.style.background = isShorts
+        ? `radial-gradient(circle at 50% 22%, ${accent}38, transparent 52%), radial-gradient(circle at 50% 82%, rgba(56, 72, 115, 0.22), transparent 56%)`
+        : `radial-gradient(circle at 28% 45%, ${accent}33, transparent 54%), radial-gradient(circle at 72% 58%, rgba(56, 72, 115, 0.18), transparent 56%)`;
+
+      const commentBodyHtml = (hideTip = false, centered = false) => `
+        <div id="preview-comment" style="display:none; text-align:${centered ? "center" : "left"};">
+          <div id="pc-tag" style="font-size:13px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:${accent};"></div>
+          <div id="pc-phrase" style="font-size:24px; font-weight:700; color:#f5f1eb; margin-top:6px; line-height:1.25; word-break:keep-all;"></div>
+          <div id="pc-meaning" style="font-size:18px; color:#dcd4ce; margin-top:5px; line-height:1.4; word-break:keep-all;"></div>
+          ${!hideTip ? `<div id="pc-tip" style="font-size:15px; color:#9c938e; margin-top:8px; line-height:1.45; word-break:keep-all;"></div>` : ""}
+        </div>
+      `;
+
+      const lyricStageHtml = `
+        <div style="position:relative; height:100%; overflow:hidden;">
+          <div class="lyric-mask" style="position:absolute; inset:0; overflow:hidden;">
+            <div id="preview-lyric-track" style="position:absolute; left:0; right:0; top:50%; will-change:transform;"></div>
+          </div>
+        </div>
+      `;
+
+      const outerPad = isShorts
+        ? "104px 96px 210px 68px"
+        : isClassic
+          ? "60px 96px"
+          : isEditorial
+            ? "64px 96px"
+            : "64px 108px";
+
+      let innerHtml = "";
+      if (isShorts) {
+        innerHtml = `
+          <div style="width:100%; height:100%; display:flex; flex-direction:column; gap:28px;">
+            <div style="display:flex; flex-direction:column; gap:16px;">
+              <div style="display:flex; align-items:center; gap:20px;">
+                <img id="preview-cover-img" src="${mediaUrl("cover.jpg")}" style="width:112px; height:112px; border-radius:12px; object-fit:cover; flex-shrink:0; border:1px solid rgba(255,255,255,0.14); box-shadow:0 16px 36px rgba(0,0,0,0.65);" />
+                <div style="min-width:0; flex:1;">
+                  <div class="font-lyric-serif" style="font-size:28px; font-weight:700; color:#f5f1eb; line-height:1.18;">${escapeHtml(meta.title)}</div>
+                  <div style="font-size:18px; color:#9f9690; margin-top:4px;">${escapeHtml(meta.artist)}</div>
+                  <div style="margin-top:10px;"><canvas id="preview-spectrum" width="220" height="30" style="display:block;"></canvas></div>
+                </div>
+              </div>
+              ${renderTrackProgressBarHtml(duration, accent, "100%")}
+            </div>
+            <div style="flex:1; min-height:0;">${lyricStageHtml}</div>
+            ${(appState.showComment || (appState.showSongContext && hasSongNotes(appState.timeline))) ? `
+              <div style="width:100%; height:248px; overflow:hidden; padding:20px 24px; box-sizing:border-box; border-radius:16px; background-color:rgba(18, 15, 24, 0.56); border:1px solid color-mix(in oklab, ${accent} 35%, rgba(255,255,255,0.12)); backdrop-filter:blur(12px);">
+                ${commentBodyHtml(false, false)}
+              </div>
+            ` : ""}
+          </div>
+        `;
+      } else if (isEditorial) {
+        innerHtml = `
+          <div style="width:100%; height:100%; display:grid; grid-template-columns:37% 63%; gap:64px; align-items:center;">
+            <div style="height:100%; border-right:1px solid rgba(255,255,255,0.10); padding-right:52px; box-sizing:border-box; display:flex; flex-direction:column; justify-content:space-between; align-items:flex-start; text-align:left;">
+              <div style="width:100%;">
+                <div style="font-size:11px; font-weight:700; letter-spacing:0.22em; text-transform:uppercase; color:${accent}; margin-bottom:16px;">NOW STUDYING · ${escapeHtml((meta.language || "EN").toUpperCase())}</div>
+                <div style="display:flex; align-items:center; gap:20px;">
+                  <img id="preview-cover-img" src="${mediaUrl("cover.jpg")}" style="width:108px; height:108px; border-radius:10px; object-fit:cover; flex-shrink:0; border:1px solid rgba(255,255,255,0.14); box-shadow:0 18px 40px rgba(0,0,0,0.65);" />
+                  <div style="min-width:0;">
+                    <div class="font-lyric-serif" style="font-size:27px; font-weight:700; color:#f5f1eb; line-height:1.18;">${escapeHtml(meta.title)}</div>
+                    <div style="font-size:17px; color:#9f9690; margin-top:6px;">${escapeHtml(meta.artist)}</div>
+                  </div>
+                </div>
+              </div>
+              <div style="display:flex; flex-direction:column; gap:14px; width:380px; max-width:100%;">
+                <canvas id="preview-spectrum" width="380" height="44" style="display:block;"></canvas>
+                ${renderTrackProgressBarHtml(duration, accent, "380px")}
+              </div>
+              ${(appState.showComment || (appState.showSongContext && hasSongNotes(appState.timeline))) ? `
+                <div style="width:100%; max-width:460px; height:256px; overflow:hidden; padding:18px 22px; box-sizing:border-box; border-radius:10px; background-color:rgba(18, 15, 24, 0.48); border-left:3px solid ${accent}; backdrop-filter:blur(8px);">
+                  ${commentBodyHtml(false, false)}
+                </div>
+              ` : ""}
+            </div>
+            ${lyricStageHtml}
+          </div>
+        `;
+      } else if (isClassic) {
+        innerHtml = `
+          <div style="width:100%; height:100%; display:grid; grid-template-columns:38% 62%; gap:64px; align-items:center;">
+            <div style="display:flex; flex-direction:column; align-items:center; text-align:center; justify-content:center; gap:18px;">
+              <div id="preview-vinyl" class="vinyl-disc" style="width:310px; height:310px; display:flex; align-items:center; justify-content:center; box-shadow:0 24px 64px rgba(0,0,0,0.75);">
+                <img src="${mediaUrl("cover.jpg")}" style="width:176px; height:176px; border-radius:50%; object-fit:cover; border:2px solid color-mix(in oklab, ${accent} 65%, transparent);" />
+                <div style="position:absolute; width:18px; height:18px; border-radius:50%; background-color:#0c0a0f; border:2px solid rgba(255,255,255,0.28);"></div>
+              </div>
+              <div>
+                <div class="font-lyric-serif" style="font-size:30px; font-weight:700; letter-spacing:0.08em; color:#f5f1eb;">${escapeHtml(meta.title)}</div>
+                <div style="font-size:18px; color:#9c938e; margin-top:5px; letter-spacing:0.03em;">${escapeHtml(meta.artist)}</div>
+              </div>
+              <canvas id="preview-spectrum" width="300" height="40" style="display:block;"></canvas>
+              ${renderTrackProgressBarHtml(duration, accent, "300px")}
+              ${(appState.showComment || (appState.showSongContext && hasSongNotes(appState.timeline))) ? `
+                <div style="width:100%; max-width:440px; height:196px; overflow:hidden; padding-top:18px; box-sizing:border-box; border-top:1px solid rgba(255,255,255,0.16);">
+                  ${commentBodyHtml(true, true)}
+                </div>
+              ` : ""}
+            </div>
+            ${lyricStageHtml}
+          </div>
+        `;
+      } else {
+        innerHtml = `
+          <div style="width:100%; height:100%; display:grid; grid-template-columns:35% 65%; gap:80px; align-items:center;">
+            <div style="display:flex; flex-direction:column; align-items:center; text-align:center; justify-content:center; gap:18px;">
+              <img id="preview-cover-img" src="${mediaUrl("cover.jpg")}" style="width:296px; height:296px; border-radius:14px; object-fit:cover; border:1px solid rgba(255,255,255,0.12); box-shadow:0 24px 60px rgba(0,0,0,0.7);" />
+              <div>
+                <div class="font-lyric-serif" style="font-size:30px; font-weight:700; letter-spacing:0.02em; color:#f5f1eb;">${escapeHtml(meta.title)}</div>
+                <div style="font-size:18px; color:#a59c96; margin-top:6px;">${escapeHtml(meta.artist)}</div>
+              </div>
+              <canvas id="preview-spectrum" width="300" height="38" style="display:block;"></canvas>
+              ${renderTrackProgressBarHtml(duration, accent, "300px")}
+              ${(appState.showComment || (appState.showSongContext && hasSongNotes(appState.timeline))) ? `
+                <div style="width:100%; max-width:440px; height:224px; overflow:hidden; padding-top:18px; box-sizing:border-box; border-top:1px solid rgba(255,255,255,0.16);">
+                  ${commentBodyHtml(false, false)}
+                </div>
+              ` : ""}
+            </div>
+            ${lyricStageHtml}
+          </div>
+        `;
+      }
 
       stageContent.innerHTML = `
         <div style="width:100%; height:100%; display:flex; align-items:center; justify-content:center;">
-          <div style="width:${(100 / contentScale).toFixed(3)}%; height:${(100 / contentScale).toFixed(3)}%; transform:scale(${contentScale}); transform-origin:center center; padding:${isClassic ? "64px 100px" : "70px 115px"}; box-sizing:border-box; display:flex; align-items:center; justify-content:center;">
-            <div style="width:100%; height:100%; display:grid; grid-template-columns:34% 66%; gap:${isClassic ? 68 : 84}px; align-items:center;">
-              <div style="display:flex; flex-direction:column; align-items:${isEditorial ? "flex-start" : "center"}; text-align:${isEditorial ? "left" : "center"}; justify-content:center; gap:${isEditorial ? 24 : 0}px;">
-                ${isEditorial ? `
-                  <div style="display:flex; align-items:center; gap:20px; width:100%;">
-                    <img src="${mediaUrl("cover.jpg")}" style="width:${coverSize}px; height:${coverSize}px; border-radius:10px; object-fit:cover; border:1px solid rgba(255,255,255,0.12); box-shadow:0 18px 40px rgba(0,0,0,0.65); flex-shrink:0;" />
-                    <div style="min-width:0;">
-                      <div class="font-lyric-serif" style="font-size:28px; font-weight:700; letter-spacing:0.02em; color:#f5f1eb; line-height:1.15;">${escapeHtml(meta.title)}</div>
-                      <div style="font-size:18px; color:#9f9690; margin-top:6px;">${escapeHtml(meta.artist)}</div>
-                    </div>
-                  </div>
-                ` : `
-                  <img src="${mediaUrl("cover.jpg")}" style="width:${coverSize}px; height:${coverSize}px; border-radius:${isClassic ? 4 : 14}px; object-fit:cover; border:${isClassic ? `1px solid ${accent}44` : "1px solid rgba(255,255,255,0.12)"}; box-shadow:0 24px 60px rgba(0,0,0,0.7);" />
-                  <div class="font-lyric-serif" style="font-size:${isClassic ? 32 : 30}px; font-weight:700; letter-spacing:${isClassic ? "0.1em" : "0.02em"}; color:#f5f1eb; margin-top:24px;">${escapeHtml(meta.title)}</div>
-                  ${isMinimal ? `<div style="font-size:19px; color:#a59c96; margin-top:6px;">${escapeHtml(meta.artist)}</div>` : ""}
-                `}
-
-                <div style="margin-top:${isEditorial ? 0 : 22}px; margin-bottom:${isMinimal ? 22 : 0}px;">
-                  <canvas id="preview-spectrum" width="${specW}" height="${specH}" style="display:block;"></canvas>
-                </div>
-
-                ${isClassic ? `<div style="font-size:19px; color:#9c938e; margin-top:12px; letter-spacing:0.03em;">${escapeHtml(meta.artist)}</div>` : ""}
-
-                <div id="preview-comment" style="width:100%; max-width:${isEditorial ? 460 : 440}px; margin-top:${isEditorial ? 8 : 24}px; padding-top:${isEditorial ? 2 : 20}px; padding-left:${isEditorial ? 22 : 0}px; border-top:${isEditorial ? "none" : "1px solid rgba(255,255,255,0.16)"}; border-left:${isEditorial ? `3px solid ${accent}` : "none"}; text-align:${isClassic ? "center" : "left"};">
-                  <div id="pc-tag" style="font-size:14px; font-weight:700; letter-spacing:0.14em; text-transform:uppercase; color:${accent};"></div>
-                  <div id="pc-phrase" style="font-size:25px; font-weight:700; color:#f5f1eb; margin-top:6px;"></div>
-                  <div id="pc-meaning" style="font-size:19px; color:#dcd4ce; margin-top:5px; line-height:1.4; word-break:keep-all;"></div>
-                  ${!isClassic ? `<div id="pc-tip" style="font-size:16px; color:#9c938e; margin-top:9px; line-height:1.45; word-break:keep-all;"></div>` : ""}
-                </div>
-              </div>
-
-              <div class="lyric-mask" style="position:relative; height:100%; overflow:hidden;">
-                <div id="preview-lyric-track" style="position:absolute; left:0; right:0; top:50%; will-change:transform;"></div>
-              </div>
-            </div>
+          <div style="width:${(100 / effectiveScale).toFixed(3)}%; height:${(100 / effectiveScale).toFixed(3)}%; transform:scale(${effectiveScale}); transform-origin:center center; padding:${outerPad}; box-sizing:border-box; display:flex; align-items:center; justify-content:center;">
+            ${innerHtml}
           </div>
         </div>
       `;
 
       appState.lastBuiltStyle = appState.style;
-      appState.lastBuiltScale = contentScale;
+      appState.lastBuiltScale = effectiveScale;
       rebuildPreviewRows();
       fitVirtualStage();
     }
@@ -835,9 +1453,21 @@
       const track = document.getElementById("preview-lyric-track");
       if (!track || !appState.timeline) return;
       const lines = appState.timeline.lines;
+      const meta = appState.timeline.meta || {};
       const isMinimal = appState.style === "minimal";
+      const isShorts = appState.style === "shorts";
       const isClassic = appState.style === "classic2";
-      const isCentered = isClassic;
+      const rawScale = Number(appState.contentScale || meta.content_scale || 1.18);
+      const effectiveScale = isShorts
+        ? Math.max(0.88, Math.min(1.12, rawScale * 0.88))
+        : Math.max(0.85, Math.min(1.4, rawScale));
+
+      const metrics = computeLineLayoutMetrics(lines, {
+        stylePreset: appState.style,
+        showPronunciation: appState.showPronunciation,
+        contentScale: effectiveScale,
+      });
+      appState.layoutMetrics = metrics;
 
       track.innerHTML = "";
       appState.previewRows = [];
@@ -845,26 +1475,37 @@
       for (let i = 0; i < lines.length; i++) {
         const ln = lines[i];
         const rowWrap = document.createElement("div");
-        rowWrap.style.cssText = `height:${ITEM_HEIGHT_1080}px; display:flex; flex-direction:column; justify-content:center;`;
+        rowWrap.style.cssText = `height:${metrics.heights[i]}px; display:flex; flex-direction:column; justify-content:center;`;
 
         const inner = document.createElement("div");
         inner.dataset.jumpId = String(ln.id);
-        inner.style.cssText = isMinimal
-          ? "text-align:left; padding:6px 12px; cursor:pointer; transform-origin:left center; opacity:0.36; filter:blur(0.7px); transform:scale(1);"
-          : `text-align:${isCentered ? "center" : "left"}; padding:16px 26px; border-radius:${isCentered ? 2 : 6}px; border-left:4px solid transparent; cursor:pointer; opacity:0.34;`;
+        if (isMinimal || isShorts) {
+          inner.style.cssText = `text-align:left; padding:${isShorts ? "8px 12px" : "6px 12px"}; cursor:pointer; transform-origin:left center; opacity:${isShorts ? "0.32" : "0.36"}; filter:blur(${isShorts ? "0.6px" : "0.7px"}); transform:scale(1);`;
+        } else if (isClassic) {
+          inner.style.cssText = "text-align:center; padding:16px 28px; border-top:1px solid transparent; border-bottom:1px solid transparent; cursor:pointer; opacity:0.34;";
+        } else {
+          inner.style.cssText = "text-align:left; padding:16px 26px; border-radius:6px; border-left:4px solid transparent; cursor:pointer; opacity:0.34;";
+        }
 
         const origEl = document.createElement("div");
-        origEl.style.cssText = isMinimal
-          ? "font-size:34px; font-weight:700; line-height:1.24; letter-spacing:-0.01em; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#f5f1eb;"
-          : `font-family:'Noto Serif KR', Georgia, 'Times New Roman', serif; font-size:${isCentered ? 34 : 32}px; font-weight:700; line-height:1.28; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#f5f1eb;`;
+        if (!isMinimal && !isShorts) origEl.className = "font-lyric-serif";
+        origEl.style.cssText = (isMinimal || isShorts)
+          ? `font-size:${isShorts ? 42 : 34}px; font-weight:700; line-height:1.24; letter-spacing:-0.01em; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#f5f1eb;`
+          : `font-size:${isClassic ? 34 : 32}px; font-weight:700; line-height:1.28; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#f5f1eb;`;
 
         const wordSpans = [];
-        if (ln.words && ln.words.length > 0 && !ln.whole_line) {
+        if (appState.showWordHighlight && ln.words && ln.words.length > 0 && !ln.whole_line) {
           ln.words.forEach((w, wIdx) => {
             const sp = document.createElement("span");
-            sp.textContent = w.text + (wIdx < ln.words.length - 1 ? " " : "");
+            sp.className = "word-token";
+            const canLift = appState.karaokeSweep && appState.lyricWordLift && w.text.length <= 16;
+            if (canLift) sp.style.display = "inline-block";
+            sp.textContent = w.text;
             origEl.appendChild(sp);
-            wordSpans.push(sp);
+            if (wIdx < ln.words.length - 1) {
+              origEl.appendChild(document.createTextNode(" "));
+            }
+            wordSpans.push({ span: sp, canLift });
           });
         } else {
           origEl.textContent = ln.original;
@@ -872,19 +1513,19 @@
         inner.appendChild(origEl);
 
         let pronEl = null;
-        if (ln.pronunciation) {
+        if (appState.showPronunciation && ln.pronunciation) {
           pronEl = document.createElement("div");
           pronEl.textContent = ln.pronunciation;
-          pronEl.style.cssText = isMinimal
-            ? "font-size:19px; margin-top:6px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#a79d97;"
+          pronEl.style.cssText = (isMinimal || isShorts)
+            ? `font-size:${isShorts ? 23 : 19}px; margin-top:${isShorts ? 8 : 6}px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#a79d97;`
             : "font-size:19px; margin-top:7px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#9c928d;";
           inner.appendChild(pronEl);
         }
 
         const transEl = document.createElement("div");
         transEl.textContent = ln.translation || "";
-        transEl.style.cssText = isMinimal
-          ? "font-size:24px; margin-top:5px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#8f8680;"
+        transEl.style.cssText = (isMinimal || isShorts)
+          ? `font-size:${isShorts ? 28 : 24}px; margin-top:${isShorts ? 6 : 5}px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#8f8680;`
           : "font-size:23px; margin-top:5px; white-space:normal; overflow-wrap:break-word; word-break:keep-all; color:#867d78;";
         inner.appendChild(transEl);
 
@@ -898,6 +1539,7 @@
           transEl,
           wordSpans,
           wasActive: null,
+          lastActivation: null,
         });
       }
     }
@@ -907,33 +1549,56 @@
       const t = appState.currentTime;
       const lines = appState.timeline.lines;
       const meta = appState.timeline.meta || {};
-      const accent = meta.accent_color || "#d88392";
+      const accent = meta.accent_color || appState.accentColor || "#d88392";
+      const duration = Math.max(0.1, Number(meta.duration || 1));
+      const elapsed = Math.min(duration, Math.max(0, t));
 
-      // Update Beat HUD
-      const bpm = Number(appState.score.grid.bpm) || 120;
-      const t0 = Number(appState.score.grid.t0) || 0;
-      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
-      const beatSec = 60.0 / bpm;
-      const relBeats = Math.max(0, (t - t0) / beatSec);
-      const curBar = 1 + Math.floor(relBeats / bpb);
-      const curBeat = (1 + (relBeats % bpb)).toFixed(1);
-      hudBarBeat.textContent = `Bar ${String(curBar).padStart(2, "0")} · Beat ${curBeat}`;
+      const grid = gridPosition();
+      const beat = (t - grid.t0) / grid.period;
+      hudBarBeat.textContent = formatBarBeat(beat);
+      const beatIndex = Math.floor(beat);
+      const isDownbeat = modulo(beatIndex - grid.offset, grid.beatsPerBar) === 0;
+      hudBeatDot.style.transform = appState.playing && beat - beatIndex < 0.16
+        ? (isDownbeat ? "scale(1.6)" : "scale(1.2)") : "scale(1)";
 
       const activeIdx = findActiveLineIndex(lines, t);
-      const targetIdx = findScrollTargetIndex(lines, t);
-      hudActiveId.textContent = activeIdx >= 0 ? `#${String(lines[activeIdx].id).padStart(2, "0")}` : "간주 / 대기";
+      const targetIdx = findScrollTargetIndex(lines, t, appState.smoothLyricScroll ? SCROLL_DURATION_SEC : 0);
+      hudActiveId.textContent = activeIdx >= 0 ? "#" + String(lines[activeIdx].id).padStart(2, "0") : "간주 / 대기";
 
-      // Metronome click on quarter-beat crossings while playing
-      if (appState.playing && document.getElementById("chk-metronome").checked) {
-        const qBeat = Math.floor((t - t0) / beatSec);
-        if (t >= t0 && qBeat !== appState.lastMetronomeBeat) {
-          appState.lastMetronomeBeat = qBeat;
-          playMetronomeTick((qBeat % bpb) === 0);
-        }
+      // Update Progress Bar & Clocks
+      const progEl = document.getElementById("preview-progress");
+      if (progEl) {
+        progEl.max = duration;
+        progEl.value = elapsed;
+      }
+      const elClock = document.getElementById("preview-elapsed");
+      if (elClock) elClock.textContent = formatClock(elapsed);
+      const totClock = document.getElementById("preview-total");
+      if (totClock) totClock.textContent = formatClock(duration);
+
+      // Bass energy halo & Classic2 vinyl spin
+      const specFps = (appState.spectrum && appState.spectrum.fps) || 30;
+      const frameIdx = Math.min(
+        Math.max(0, ((appState.spectrum && appState.spectrum.frames.length) || 1) - 1),
+        Math.max(0, Math.floor(t * specFps))
+      );
+      const bassEnergy = computeBassEnergy(appState.spectrum, frameIdx);
+      const haloAlphaHex = Math.round(28 + bassEnergy * 48).toString(16).padStart(2, "0");
+      const haloSpread = Math.round(18 + bassEnergy * 36);
+
+      const coverImg = document.getElementById("preview-cover-img");
+      if (coverImg) {
+        coverImg.style.boxShadow = `0 20px 52px rgba(0,0,0,0.7), 0 0 ${haloSpread}px ${accent}${haloAlphaHex}`;
+      }
+      const vinylEl = document.getElementById("preview-vinyl");
+      if (vinylEl) {
+        vinylEl.style.transform = `rotate(${((t * 22) % 360).toFixed(2)}deg)`;
+        vinylEl.style.boxShadow = `0 24px 64px rgba(0,0,0,0.75), 0 0 ${haloSpread}px ${accent}${haloAlphaHex}`;
       }
 
       // Update Comment
-      const c = findActiveComment(lines, t);
+      const songNote = appState.showSongContext ? findSongNote(lines, activeIdx, meta.song_context, t) : null;
+      const c = songNote || (appState.showComment ? findActiveComment(lines, t) : null);
       const cBox = document.getElementById("preview-comment");
       if (cBox) {
         if (c) {
@@ -951,53 +1616,107 @@
       // Smoothly position LyricColumn without rebuilding DOM
       const track = document.getElementById("preview-lyric-track");
       const isMinimal = appState.style === "minimal";
+      const isShorts = appState.style === "shorts";
+      const isClassic = appState.style === "classic2";
+      const centers = appState.layoutMetrics?.centers || [];
       if (track && appState.previewRows.length === lines.length) {
-        const smoothIdx = computeSmoothLineOffset(lines, targetIdx, t);
-        const translateY = -(smoothIdx * ITEM_HEIGHT_1080 + ITEM_HEIGHT_1080 / 2);
-        track.style.transform = `translate3d(0, ${translateY.toFixed(2)}px, 0)`;
+        const scrollY = appState.smoothLyricScroll ? computeSmoothScrollY(lines, centers, targetIdx, t) : (centers[targetIdx] || 0);
+        track.style.transform = `translate3d(0, ${(-scrollY).toFixed(2)}px, 0)`;
 
         for (let i = 0; i < lines.length; i++) {
           const row = appState.previewRows[i];
           const ln = lines[i];
           const isAct = i === activeIdx;
+          const act = computeLineActivation(ln, t);
+          const actChanged = row.lastActivation === null || Math.abs(row.lastActivation - act) > 0.002;
+          const activeChanged = row.wasActive !== isAct;
 
-          if (row.wasActive !== isAct) {
+          if (actChanged || activeChanged) {
+            row.lastActivation = act;
             row.wasActive = isAct;
-            if (isMinimal) {
-              row.inner.style.opacity = isAct ? "1" : "0.36";
-              row.inner.style.filter = isAct ? "none" : "blur(0.7px)";
-              row.inner.style.transform = isAct ? "scale(1.015)" : "scale(1)";
+            if (isMinimal || isShorts) {
+              const blurPx = (1 - act) * (isShorts ? 0.6 : 0.7);
+              const baseOp = isShorts ? 0.32 + 0.68 * act : 0.36 + 0.64 * act;
+              const sc = isShorts ? 1 + 0.02 * act : 1 + 0.015 * act;
+              row.inner.style.opacity = baseOp.toFixed(3);
+              row.inner.style.filter = blurPx < 0.02 ? "none" : `blur(${blurPx.toFixed(2)}px)`;
+              row.inner.style.transform = `scale(${sc.toFixed(4)})`;
               if (row.pronEl) row.pronEl.style.color = isAct ? accent : "#a79d97";
               row.transEl.style.color = isAct ? "#e2dbd5" : "#8f8680";
+            } else if (isClassic) {
+              const hairline = `1px solid color-mix(in oklab, ${accent} ${Math.round(act * 55)}%, transparent)`;
+              row.inner.style.opacity = (0.34 + 0.66 * act).toFixed(3);
+              row.inner.style.background = act > 0.01
+                ? `linear-gradient(90deg var(--in-oklab), transparent, color-mix(in oklab, ${accent} ${Math.round(act * 14)}%, rgba(16, 13, 20, ${(act * 0.55).toFixed(3)})), transparent)`
+                : "transparent";
+              row.inner.style.borderTop = hairline;
+              row.inner.style.borderBottom = hairline;
+              if (row.pronEl) row.pronEl.style.color = isAct ? accent : "#9c928d";
+              row.transEl.style.color = isAct ? "#e6dfd9" : "#867d78";
             } else {
-              row.inner.style.opacity = isAct ? "1" : "0.34";
-              row.inner.style.backgroundColor = isAct ? "rgba(56, 19, 31, 0.62)" : "transparent";
-              row.inner.style.borderLeft = isAct ? `4px solid ${accent}` : "4px solid transparent";
+              row.inner.style.opacity = (0.34 + 0.66 * act).toFixed(3);
+              row.inner.style.backgroundColor = act > 0.01
+                ? `color-mix(in oklab, ${accent} ${Math.round(act * 22)}%, rgba(16, 13, 20, ${(act * 0.62).toFixed(3)}))`
+                : "transparent";
+              row.inner.style.borderLeft = `4px solid color-mix(in oklab, ${accent} ${Math.round(act * 100)}%, transparent)`;
               if (row.pronEl) row.pronEl.style.color = isAct ? accent : "#9c928d";
               row.transEl.style.color = isAct ? "#e6dfd9" : "#867d78";
             }
             if (!isAct && row.wordSpans.length) {
-              for (const sp of row.wordSpans) sp.style.color = "";
+              for (const item of row.wordSpans) resetWordSpanStyles(item.span);
             }
           }
 
-          if (isAct && !ln.whole_line && row.wordSpans.length && ln.words?.length === row.wordSpans.length) {
-            for (let wIdx = 0; wIdx < ln.words.length; wIdx++) {
-              const w = ln.words[wIdx];
-              const spoken = t >= w.start;
-              const cur = t >= w.start && t <= w.end;
-              row.wordSpans[wIdx].style.color = cur ? "#f7dce0" : spoken ? "#f5f1eb" : "rgba(245, 241, 235, 0.42)";
+          if (isAct && !ln.whole_line && appState.showWordHighlight && row.wordSpans.length && ln.words?.length === row.wordSpans.length) {
+            if (appState.karaokeSweep) {
+              const fillTint = `color-mix(in oklab, ${accent} 38%, #ffffff)`;
+              for (let wIdx = 0; wIdx < ln.words.length; wIdx++) {
+                const w = ln.words[wIdx];
+                const highlightStart = wIdx === 0 ? ln.start : w.start;
+                const item = row.wordSpans[wIdx];
+                const sp = item.span;
+                if (t < highlightStart) {
+                  resetWordSpanStyles(sp);
+                  sp.style.color = "rgba(245, 241, 235, 0.40)";
+                } else if (t >= w.end) {
+                  resetWordSpanStyles(sp);
+                  sp.style.color = "#f5f1eb";
+                } else {
+                  const p = Math.max(0, Math.min(1, (t - highlightStart) / Math.max(0.04, w.end - highlightStart)));
+                  const pct = p * 100;
+                  const stopA = Math.max(0, pct - 4).toFixed(1);
+                  const stopB = Math.min(100, pct + 6).toFixed(1);
+                  const lift = item.canLift ? Math.sin(p * Math.PI) * 2.2 : 0;
+
+                  sp.style.backgroundImage = `linear-gradient(90deg, ${fillTint} 0%, ${fillTint} ${stopA}%, rgba(245, 241, 235, 0.40) ${stopB}%, rgba(245, 241, 235, 0.40) 100%)`;
+                  sp.style.webkitBackgroundClip = "text";
+                  sp.style.backgroundClip = "text";
+                  sp.style.color = "transparent";
+                  sp.style.webkitTextFillColor = "transparent";
+                  sp.style.transform = lift > 0.05 ? `translateY(-${lift.toFixed(2)}px)` : "";
+                  sp.style.filter = `drop-shadow(0 0 10px color-mix(in oklab, ${accent} 55%, transparent))`;
+                }
+              }
+            } else {
+              const activeTint = `color-mix(in oklab, ${accent} 42%, #ffffff)`;
+              for (let wIdx = 0; wIdx < ln.words.length; wIdx++) {
+                const w = ln.words[wIdx];
+                const highlightStart = wIdx === 0 ? ln.start : w.start;
+                const sp = row.wordSpans[wIdx].span;
+                resetWordSpanStyles(sp);
+                const spoken = t > w.end;
+                const cur = t >= highlightStart && t <= w.end;
+                sp.style.color = cur ? activeTint : spoken ? "#f5f1eb" : "rgba(245, 241, 235, 0.42)";
+              }
             }
           }
         }
       }
 
-      // Update Spectrum Canvas (1920x1080 native pixels matching StudyLayout.tsx)
+      // Update Spectrum Canvas (center-mirrored mini-wave for minimal/shorts, LED bars for editorial/classic2)
       const specCanvas = document.getElementById("preview-spectrum");
       if (specCanvas && appState.spectrum && appState.spectrum.frames.length) {
         const ctx = specCanvas.getContext("2d");
-        const fps = appState.spectrum.fps || 30;
-        const frameIdx = Math.min(appState.spectrum.frames.length - 1, Math.max(0, Math.floor(t * fps)));
         const bars = appState.spectrum.frames[frameIdx];
         const w = specCanvas.width;
         const h = specCanvas.height;
@@ -1006,11 +1725,13 @@
         const gap = 5;
         const barW = (w - gap * (count - 1)) / count;
 
-        if (isMinimal) {
+        if (isMinimal || isShorts) {
           for (let i = 0; i < count; i++) {
             const dist = Math.abs(i - (count - 1) / 2) / (count / 2);
-            const env = 1 - Math.pow(dist, 1.8);
-            const bh = Math.max(3, (0.14 + bars[i] * 0.86) * env * (h - 2));
+            const binIdx = Math.min(count - 1, Math.floor(dist * (count - 1)));
+            const val = bars[binIdx] ?? 0.15;
+            const env = 1 - Math.pow(dist, 1.75);
+            const bh = Math.max(3, (0.14 + val * 0.86) * env * (h - 2));
             ctx.fillStyle = accent;
             ctx.globalAlpha = 0.35 + 0.55 * env;
             ctx.beginPath();
@@ -1035,64 +1756,139 @@
       }
     }
 
-    function playMetronomeTick(isDownbeat) {
-      try {
-        if (!appState.audioCtx) {
-          appState.audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-        }
-        const ctx = appState.audioCtx;
-        if (ctx.state === "suspended") ctx.resume();
+    const metronome = { nextBeat: null, nodes: new Set() };
+    const metronomeToggle = document.getElementById("chk-metronome");
+
+    function resetMetronome() {
+      metronome.nextBeat = null;
+      for (const oscillator of metronome.nodes) oscillator.stop();
+      metronome.nodes.clear();
+    }
+
+    function enableMetronome() {
+      if (!metronomeToggle.checked) return;
+      const Context = window.AudioContext || window.webkitAudioContext;
+      if (!Context) return;
+      if (!appState.audioCtx) appState.audioCtx = new Context();
+      if (appState.audioCtx.state === "suspended") appState.audioCtx.resume().catch(() => {});
+    }
+
+    function scheduleMetronome() {
+      const ctx = appState.audioCtx;
+      if (!appState.score || !metronomeToggle.checked || audioEl.paused ||
+          audioEl.seeking || audioEl.readyState < 3 || ctx?.state !== "running") return;
+
+      const { t0, period, offset, beatsPerBar } = gridPosition();
+      const now = audioEl.currentTime;
+      const rate = audioEl.playbackRate;
+      const first = Math.ceil((now - t0) / period - 1e-8);
+      let next = Math.max(first, metronome.nextBeat ?? first);
+      const until = Math.min(now + 0.09 * rate, appState.beatLoop?.end ?? Infinity);
+      while (t0 + next * period < until) {
+        const when = ctx.currentTime + Math.max(0, (t0 + next * period - now) / rate);
+        const downbeat = modulo(next - offset, beatsPerBar) === 0;
         const osc = ctx.createOscillator();
         const gain = ctx.createGain();
         osc.type = "triangle";
-        osc.frequency.value = isDownbeat ? 1100 : 760;
-        gain.gain.setValueAtTime(isDownbeat ? 0.22 : 0.12, ctx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.045);
+        osc.frequency.value = downbeat ? 1100 : 760;
+        gain.gain.setValueAtTime(downbeat ? 0.22 : 0.12, when);
+        gain.gain.exponentialRampToValueAtTime(0.001, when + 0.045);
         osc.connect(gain);
         gain.connect(ctx.destination);
-        osc.start();
-        osc.stop(ctx.currentTime + 0.05);
-        hudBeatDot.style.transform = isDownbeat ? "scale(1.6)" : "scale(1.2)";
-        setTimeout(() => { hudBeatDot.style.transform = "scale(1)"; }, 70);
-      } catch {}
+        metronome.nodes.add(osc);
+        osc.onended = () => { osc.disconnect(); gain.disconnect(); metronome.nodes.delete(osc); };
+        osc.start(when);
+        osc.stop(when + 0.05);
+        next++;
+      }
+      metronome.nextBeat = next;
+    }
+
+    metronomeToggle.addEventListener("change", () => {
+      resetMetronome();
+      enableMetronome();
+    });
+    for (const event of ["pause", "seeking", "ratechange", "waiting", "ended"]) {
+      audioEl.addEventListener(event, resetMetronome);
+    }
+    audioEl.addEventListener("play", enableMetronome);
+    audioEl.addEventListener("ended", () => {
+      if (appState.beatLoop) {
+        audioEl.currentTime = appState.beatLoop.start;
+        audioEl.play().catch(() => {});
+      }
+    });
+    setInterval(scheduleMetronome, 25);
+
+    function drawScoreWaveform() {
+      const waveform = appState.waveform;
+      if (!waveform || !appState.score) return;
+      const canvas = document.getElementById("score-waveform");
+      const wrap = canvas.closest("#score-scroll-wrap");
+      const width = wrap.clientWidth;
+      if (!width) return;
+      const left = wrap.scrollLeft;
+      const scale = window.devicePixelRatio || 1;
+      canvas.style.width = width + "px";
+      canvas.style.left = left + "px";
+      canvas.width = Math.ceil(width * scale);
+      canvas.height = Math.ceil(34 * scale);
+      const ctx = canvas.getContext("2d");
+      ctx.scale(scale, scale);
+      ctx.strokeStyle = "#7d93b0";
+      const secPerPixel = gridPosition().period / appState.pxPerBeat;
+      const samplesPerPixel = secPerPixel / waveform.interval;
+      ctx.beginPath();
+      for (let x = 0; x < width; x++) {
+        const start = Math.floor((left + x) * samplesPerPixel);
+        if (start >= waveform.max.length) break;
+        const end = Math.min(waveform.max.length, Math.ceil((left + x + 1) * samplesPerPixel));
+        let min = 0;
+        let max = 0;
+        for (let i = start; i < end; i++) {
+          min = Math.min(min, waveform.min[i]);
+          max = Math.max(max, waveform.max[i]);
+        }
+        ctx.moveTo(x + 0.5, 17 - 16 * max / 127);
+        ctx.lineTo(x + 0.5, 17 - 16 * min / 127);
+      }
+      ctx.stroke();
     }
 
     // Render Main Horizontal Beat Score Ruler & Blocks
     function renderScoreLane() {
       const score = appState.score;
       if (!score) return;
-      const bpm = Number(score.grid.bpm) || 120;
-      const t0 = Number(score.grid.t0) || 0;
-      const bpb = (score.grid.time_signature && score.grid.time_signature[0]) || 4;
-      const beatSec = 60.0 / bpm;
+      const { period, t0, firstBeat, offset, beatsPerBar } = gridPosition();
       const duration = Number(score.meta?.duration || 260);
-      const totalSongBeats = Math.ceil((duration - t0) / beatSec) + 8;
+      const lastBeat = Math.ceil((duration - t0) / period) + 8;
       const pxPerBeat = appState.pxPerBeat;
-      const totalWidth = Math.max(900, Math.ceil(totalSongBeats * pxPerBeat));
+      const totalWidth = Math.max(900, Math.ceil((lastBeat - firstBeat) * pxPerBeat));
 
       const inner = document.getElementById("score-canvas-inner");
       inner.style.width = `${totalWidth}px`;
 
       const ruler = document.getElementById("score-ruler");
       let rulerHtml = "";
-      for (let hb = 0; hb <= totalSongBeats * 2; hb++) {
-        const b = hb * 0.5;
-        const x = b * pxPerBeat;
-        const isHalf = (hb % 2) === 1;
-        const isBar = !isHalf && ((Math.round(b) % bpb) === 0);
-        const barNum = 1 + Math.floor(b / bpb);
-        rulerHtml += `<div style="position:absolute; left:${x}px; top:0; bottom:0; width:1px; background:${isBar ? "#475569" : isHalf ? "#1b202c" : "#272e3f"};"></div>`;
-        if (isBar) {
-          rulerHtml += `<div style="position:absolute; left:${x + 4}px; top:4px; font-size:10px; font-family:monospace; color:#cbd5e1;">M${barNum}</div>`;
+      for (let hb = Math.ceil(firstBeat * 2); hb <= lastBeat * 2; hb++) {
+        const beat = hb / 2;
+        const x = (beat - firstBeat) * pxPerBeat;
+        const half = hb % 2 !== 0;
+        const downbeat = !half && modulo(beat - offset, beatsPerBar) === 0;
+        const color = downbeat ? "#fb7185" : half ? "#242e41" : "#46536a";
+        rulerHtml += '<div style="position:absolute; left:' + x + 'px; top:0; bottom:0; width:1px; background:' + color + '; opacity:0.75"></div>';
+        if (downbeat) {
+          rulerHtml += '<div style="position:absolute; left:' + (x + 4) + 'px; top:4px; font-size:11px; color:#fda4af;">M' + musicalPosition(beat).bar + '</div>';
         }
       }
       ruler.innerHTML = rulerHtml;
+      drawScoreWaveform();
 
       const blocksEl = document.getElementById("score-blocks");
       let blocksHtml = "";
       for (const ln of score.lines) {
         const startBeats = lineStartBeatTotal(ln);
-        const x = startBeats * pxPerBeat;
+        const x = Math.max(0, (startBeats - firstBeat) * pxPerBeat);
         const w = Math.max(22, ln.duration_beats * pxPerBeat - 2);
         const isPrimary = ln.id === appState.selectedLineId;
         const isMulti = !isPrimary && appState.selectedLineIds.has(ln.id);
@@ -1128,9 +1924,8 @@
     function updateScorePlayhead() {
       if (!appState.score) return;
       const bpm = Number(appState.score.grid.bpm) || 120;
-      const t0 = Number(appState.score.grid.t0) || 0;
       const beatSec = 60.0 / bpm;
-      const relBeats = Math.max(0, (appState.currentTime - t0) / beatSec);
+      const relBeats = appState.currentTime / beatSec;
       const x = relBeats * appState.pxPerBeat;
       document.getElementById("score-playhead").style.left = `${x}px`;
 
@@ -1161,16 +1956,15 @@
     }
 
     function seekWithinSelectedLineFromClientX(clientX) {
-      const sel = getSelectedScoreLine();
-      if (!sel) return;
+      const line = getSelectedScoreLine();
+      if (!line) return;
       const rect = document.getElementById("word-lane-inner").getBoundingClientRect();
-      const x = Math.max(0, clientX - rect.left);
-      const wordPxPerBeat = getWordPxPerBeat(sel);
-      const durBeats = Math.max(0.5, Number(sel.duration_beats));
-      const relBeats = Math.max(0, Math.min(durBeats, x / wordPxPerBeat));
-      const bpm = Number(appState.score.grid.bpm) || 120;
-      const beatSec = 60.0 / bpm;
-      const t = Math.max(sel.start, Math.min(sel.end, sel.start + relBeats * beatSec));
+      seekToWordBeat(line, (clientX - rect.left) / getWordPxPerBeat(line));
+    }
+
+    function seekToWordBeat(line, beat) {
+      const beatSec = 60 / appState.score.grid.bpm;
+      const t = Math.max(line.start, Math.min(line.end, line.start + beat * beatSec));
       audioEl.currentTime = t;
       appState.currentTime = t;
       scrubber.value = t;
@@ -1180,19 +1974,59 @@
       updateVideoPreviewFrame();
     }
 
+    function setWordSelection(indices, primary, anchor = primary) {
+      appState.selectedWordIndices = new Set(indices);
+      appState.selectedWordIdx = primary;
+      appState.wordSelectionAnchor = anchor;
+    }
+
+    function resetWordSelection() {
+      setWordSelection([0], 0);
+    }
+
+    function selectWord(index, { toggle = false, range = false } = {}) {
+      const selected = appState.selectedWordIndices;
+      const anchor = appState.wordSelectionAnchor;
+      if (range && anchor != null) {
+        const first = Math.min(anchor, index);
+        const last = Math.max(anchor, index);
+        const indices = toggle ? new Set(selected) : new Set();
+        for (let i = first; i <= last; i++) indices.add(i);
+        setWordSelection(indices, index, anchor);
+      } else if (toggle) {
+        if (selected.has(index)) {
+          selected.delete(index);
+          const primary = selected.has(appState.selectedWordIdx)
+            ? appState.selectedWordIdx : selected.values().next().value ?? null;
+          setWordSelection(selected, primary, index);
+        } else {
+          selected.add(index);
+          setWordSelection(selected, index);
+        }
+      } else {
+        setWordSelection([index], index);
+      }
+      renderWordLane();
+    }
+
     // Render Selected Line Intra-Line Word Score (0.25-beat resolution)
     function renderWordLane() {
       const sel = getSelectedScoreLine();
       if (!sel) return;
       const whole = Boolean(sel.whole_line);
+      const words = sel.words || [];
+      const selectedCount = words.filter((_, index) => appState.selectedWordIndices.has(index)).length;
       document.getElementById("lbl-word-header").textContent = whole
         ? `#${String(sel.id).padStart(2, "0")} 한 줄 전체 표시 모드 (줄 내부 박자 조절 없음)`
-        : `#${String(sel.id).padStart(2, "0")} 줄 내부 단어 박자 (${sel.duration_beats}박 · 0.25박 단위)`;
+        : `#${String(sel.id).padStart(2, "0")} 줄 내부 단어 박자 (${sel.duration_beats}박 · ${selectedCount}개 선택)`;
 
       document.getElementById("word-whole-overlay").classList.toggle("hidden", !whole);
-      ["btn-word-back", "btn-word-fwd", "btn-word-dur-short", "btn-word-dur-long", "btn-word-even"].forEach((id) => {
-        document.getElementById(id).disabled = whole;
+      ["btn-word-back", "btn-word-fwd", "btn-word-dur-short", "btn-word-dur-long"].forEach((id) => {
+        document.getElementById(id).disabled = whole || selectedCount === 0;
       });
+      document.getElementById("btn-word-even").disabled = whole || words.length === 0;
+      document.getElementById("btn-align-words-selected").disabled = appState.aligningWords ||
+        getSelectedScoreLines().every(line => line.whole_line || line.original.trim().startsWith("♪"));
 
       const wrap = document.getElementById("word-lane-wrap");
       const inner = document.getElementById("word-lane-inner");
@@ -1216,15 +2050,20 @@
       ruler.innerHTML = rHtml;
 
       const wordsEl = document.getElementById("word-blocks");
-      const words = sel.words || [];
       let wHtml = "";
       words.forEach((w, idx) => {
         const x = Number(w.rel_beat || 0) * wordPxPerBeat;
         const width = Math.max(18, Number(w.duration_beats || 0.25) * wordPxPerBeat - 2);
-        const isSelW = idx === appState.selectedWordIdx;
+        const selected = appState.selectedWordIndices.has(idx);
+        const primary = selected && idx === appState.selectedWordIdx;
+        const color = primary
+          ? "bg-sky-500/30 border-sky-300 text-white z-20"
+          : selected
+            ? "bg-sky-700/45 border-sky-500 text-sky-100 z-10"
+            : "bg-[#1e2533] hover:bg-[#283246] border-[#34405a] text-slate-200";
         wHtml += `
-          <div data-word-idx="${idx}"
-               class="word-block-tick absolute top-1.5 bottom-1.5 rounded cursor-grab select-none flex items-center px-2 overflow-hidden ${isSelW ? "bg-sky-500/30 border border-sky-400 text-white z-20" : "bg-[#1e2533] hover:bg-[#283246] border border-[#34405a] text-slate-200 z-10"}"
+          <div data-word-idx="${idx}" data-word-selected="${selected}"
+               class="word-block-tick absolute top-1.5 bottom-1.5 rounded cursor-grab select-none flex items-center px-2 overflow-hidden border ${color}"
                style="left:${x}px; width:${width}px;">
             <span class="text-[11px] font-medium truncate">${escapeHtml(w.text)}</span>
             <div data-word-resize-idx="${idx}" title="단어 길이 조절 드래그 (0.25박 단위)" class="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-white/10 hover:bg-sky-400/70"></div>
@@ -1242,7 +2081,7 @@
         ? `#${String(sel.id).padStart(2, "0")} (+${selCount - 1})`
         : `#${String(sel.id).padStart(2, "0")}`;
       document.getElementById("sel-badge-beat").textContent =
-        `Bar ${sel.bar} · Beat ${sel.beat.toFixed(1)} (${sel.duration_beats.toFixed(1)}박 · ${sel.start.toFixed(2)}s)`;
+        `${formatBarBeat(lineStartBeatTotal(sel))} (${sel.duration_beats.toFixed(1)}박 · ${sel.start.toFixed(2)}s)`;
       updateSelectionBadge();
 
       const btnWhole = document.getElementById("btn-toggle-whole");
@@ -1275,7 +2114,7 @@
             <div class="min-w-0 flex-1">
               <div class="flex items-center gap-2 text-[11px] font-mono">
                 <span class="font-bold ${isPrimary ? "text-rose-300" : isMulti ? "text-sky-300" : "text-slate-400"}">#${String(ln.id).padStart(2, "0")}</span>
-                <span class="text-sky-300">M${ln.bar} · ${ln.beat.toFixed(1)}박</span>
+                <span class="text-sky-300">${formatBarBeat(lineStartBeatTotal(ln))}</span>
                 <span class="text-slate-500">(${ln.duration_beats.toFixed(1)}박)</span>
                 ${whole ? `<span class="px-1.5 py-0 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 text-[10px] font-sans font-semibold">한줄전체</span>` : ""}
               </div>
@@ -1291,6 +2130,9 @@
     function refreshAllViews(rebuildList = true) {
       recomputeTimelineFromScore();
       renderSelectedInspector();
+      const margin = appState.score.grid.downbeat_margin;
+      document.getElementById("beat-analysis-note").textContent = margin == null ? "" :
+        (margin < 0.08 ? "1박 후보가 비슷함 · 반복 재생으로 확인" : "자동 1박 후보");
       renderScoreLane();
       renderWordLane();
       if (rebuildList) renderLyricList();
@@ -1300,6 +2142,7 @@
     function selectLine(id, seekAudio = false, opts = {}) {
       const lines = appState.score?.lines || [];
       const { toggle = false, range = false, scrollToView = true } = opts;
+      const previousLine = appState.selectedLineId;
 
       if (range && appState.lastClickedLineId != null) {
         const idxA = lines.findIndex(l => l.id === appState.lastClickedLineId);
@@ -1330,7 +2173,7 @@
         appState.lastClickedLineId = id;
       }
 
-      appState.selectedWordIdx = 0;
+      if (appState.selectedLineId !== previousLine) resetWordSelection();
       const sel = getSelectedScoreLine();
       if (sel && seekAudio) {
         audioEl.currentTime = sel.start;
@@ -1340,6 +2183,9 @@
         lblTime.textContent = `${fmtTime(sel.start)} / ${fmtTime(audioEl.duration || 0)}`;
       }
       renderSelectedInspector();
+      const margin = appState.score.grid.downbeat_margin;
+      document.getElementById("beat-analysis-note").textContent = margin == null ? "" :
+        (margin < 0.08 ? "1박 후보가 비슷함 · 반복 재생으로 확인" : "자동 1박 후보");
       renderScoreLane();
       renderWordLane();
       renderLyricList();
@@ -1374,8 +2220,13 @@
       appState.selectedLineIds = new Set(lines.map(l => l.id));
       if (!appState.selectedLineIds.has(appState.selectedLineId)) {
         appState.selectedLineId = lines[0].id;
+        resetWordSelection();
+        renderWordLane();
       }
       renderSelectedInspector();
+      const margin = appState.score.grid.downbeat_margin;
+      document.getElementById("beat-analysis-note").textContent = margin == null ? "" :
+        (margin < 0.08 ? "1박 후보가 비슷함 · 반복 재생으로 확인" : "자동 1박 후보");
       renderScoreLane();
       renderLyricList();
       setStatus(`가사 전체 ${lines.length}줄 선택됨 (드래그 또는 [ / ] 로 함께 이동, Esc 단일 선택)`);
@@ -1386,6 +2237,7 @@
       if (!target) return;
       pushUndoSnapshot(captureSnapshot());
       target.whole_line = !target.whole_line;
+      if (appState.selectedLineId !== lineId) resetWordSelection();
       appState.selectedLineId = lineId;
       if (!appState.selectedLineIds.has(lineId)) {
         appState.selectedLineIds = new Set([lineId]);
@@ -1411,14 +2263,16 @@
           targets = appState.score.lines.slice(startIdx);
         }
         const minOrig = Math.min(...targets.map(l => lineStartBeatTotal(l)));
-        const appliedDelta = Math.max(-minOrig, deltaBeats);
+        const appliedDelta = Math.max(Math.min(0, gridPosition().firstBeat - minOrig), deltaBeats);
         for (const ln of targets) {
           setLineStartFromTotalBeats(ln, lineStartBeatTotal(ln) + appliedDelta);
+          ln.timing_edited = true;
         }
       }
       if (deltaDur !== 0) {
         for (const ln of selectedGroup) {
-          ln.duration_beats = Math.max(0.5, Number((ln.duration_beats + deltaDur).toFixed(2)));
+          ln.duration_beats = Math.max(0.5, ln.duration_beats + deltaDur);
+          ln.timing_edited = true;
         }
       }
       appState.dirty = true;
@@ -1426,26 +2280,55 @@
       refreshAllViews(true);
     }
 
-    function nudgeSelectedWord(deltaBeats, deltaDur = 0) {
-      const sel = getSelectedScoreLine();
-      if (!sel || sel.whole_line || !sel.words || !sel.words.length) return;
-      const w = sel.words[appState.selectedWordIdx];
-      if (!w) return;
-      pushUndoSnapshot(captureSnapshot());
-      if (deltaBeats !== 0) {
-        const newRel = Math.max(0, Math.min(sel.duration_beats - 0.25, Math.round((Number(w.rel_beat || 0) + deltaBeats) * 4) / 4));
-        w.rel_beat = newRel;
+    function captureWordTargets(line) {
+      if (!line || line.whole_line) return [];
+      return (line.words || []).flatMap((word, index) => appState.selectedWordIndices.has(index)
+        ? [{ word, start: Number(word.rel_beat ?? 0), duration: Number(word.duration_beats ?? 0.25) }]
+        : []);
+    }
+
+    function applyWordDelta(line, targets, delta, resize) {
+      if (!targets.length) return false;
+      const lower = resize
+        ? Math.max(...targets.map(({ duration }) => Math.min(0.25, duration) - duration))
+        : -Math.min(...targets.map(({ start }) => start));
+      const upper = Number(line.duration_beats) - Math.max(...targets.map(({ start, duration }) => start + duration));
+      const clamped = Math.max(Math.min(0, lower), Math.min(Math.max(0, upper), delta));
+      const field = resize ? "duration_beats" : "rel_beat";
+      let changed = false;
+      for (const target of targets) {
+        const origin = resize ? target.duration : target.start;
+        const value = clamped === 0 ? origin : Number((origin + clamped).toFixed(9));
+        if (Math.abs(value - Number(target.word[field] ?? origin)) <= 1e-8) continue;
+        target.word[field] = value;
+        changed = true;
       }
-      if (deltaDur !== 0) {
-        const maxDur = Math.max(0.25, Number(sel.duration_beats) - Number(w.rel_beat || 0));
-        const newDur = Math.max(0.25, Math.min(maxDur, Math.round((Number(w.duration_beats || 0.25) + deltaDur) * 4) / 4));
-        w.duration_beats = Number(newDur.toFixed(2));
+      if (changed) {
+        line.word_timing_edited = true;
+        appState.dirty = true;
       }
-      appState.dirty = true;
-      setStatus("단어 박자/길이 수정됨 (저장 전)");
+      return changed;
+    }
+
+    function renderWordTimingEdit(line, seekBeat = null) {
       recomputeTimelineFromScore();
       renderWordLane();
-      updateVideoPreviewFrame();
+      if (seekBeat != null && !appState.playing) seekToWordBeat(line, seekBeat);
+      else {
+        updateScorePlayhead();
+        updateVideoPreviewFrame();
+      }
+    }
+
+    function nudgeSelectedWords(delta, resize = false) {
+      const line = getSelectedScoreLine();
+      const targets = captureWordTargets(line);
+      if (!targets.length) return;
+      const before = captureSnapshot();
+      if (!applyWordDelta(line, targets, delta, resize)) return;
+      pushUndoSnapshot(before);
+      renderWordTimingEdit(line);
+      setStatus(`단어 ${targets.length}개 ${resize ? "길이 조절" : "이동"}됨 (저장 전)`);
     }
 
     // Score & Word Mouse Dragging + Right-Click Horizontal Pan & Whole-Line Toggle
@@ -1453,6 +2336,8 @@
     let panState = null;
 
     const scoreWrap = document.getElementById("score-scroll-wrap");
+    scoreWrap.addEventListener("scroll", drawScoreWaveform, { passive: true });
+    new ResizeObserver(drawScoreWaveform).observe(scoreWrap);
     const wordWrap = document.getElementById("word-lane-wrap");
 
     scoreWrap.addEventListener("contextmenu", (e) => e.preventDefault());
@@ -1483,6 +2368,7 @@
 
         if (!resizeEl && !isToggle && !isRange && appState.selectedLineIds.has(id) && appState.selectedLineIds.size > 1) {
           // Keep multi-selection intact for group dragging; narrow only if released without dragging
+          if (appState.selectedLineId !== id) resetWordSelection();
           appState.selectedLineId = id;
           narrowOnClick = true;
           renderSelectedInspector();
@@ -1521,8 +2407,7 @@
       const rect = document.getElementById("score-canvas-inner").getBoundingClientRect();
       const x = e.clientX - rect.left;
       const bpm = Number(appState.score.grid.bpm) || 120;
-      const t0 = Number(appState.score.grid.t0) || 0;
-      const t = Math.max(0, t0 + (x / appState.pxPerBeat) * (60.0 / bpm));
+      const t = Math.max(0, (x / appState.pxPerBeat) * (60.0 / bpm));
       audioEl.currentTime = t;
       appState.currentTime = t;
       scrubber.value = t;
@@ -1548,25 +2433,40 @@
 
       const sel = getSelectedScoreLine();
       if (!sel || sel.whole_line) return;
-      const wordResizeEl = e.target.closest("[data-word-resize-idx]");
+      wordWrap.focus({ preventScroll: true });
+      const resize = Boolean(e.target.closest("[data-word-resize-idx]"));
       const wordEl = e.target.closest("[data-word-idx]");
       if (wordEl) {
-        const idx = Number(wordResizeEl ? wordResizeEl.dataset.wordResizeIdx : wordEl.dataset.wordIdx);
-        appState.selectedWordIdx = idx;
-        const w = sel.words?.[idx];
-        if (!w) return;
-        const wordPxPerBeat = getWordPxPerBeat(sel);
+        const index = Number(wordEl.dataset.wordIdx);
+        if (!sel.words?.[index]) return;
+        const toggle = e.ctrlKey || e.metaKey;
+        const range = e.shiftKey;
+        if (toggle || range) {
+          selectWord(index, { toggle, range });
+          e.preventDefault();
+          return;
+        }
+
+        const keepGroup = appState.selectedWordIndices.has(index) && appState.selectedWordIndices.size > 1;
+        if (keepGroup) {
+          appState.selectedWordIdx = index;
+          renderWordLane();
+        } else {
+          selectWord(index);
+        }
+
         dragState = {
-          type: wordResizeEl ? "resize-word" : "move-word",
-          idx,
+          type: "edit-words",
+          line: sel,
+          index,
+          resize,
+          targets: captureWordTargets(sel),
           startX: e.clientX,
-          origRel: Number(w.rel_beat || 0),
-          origDur: Number(w.duration_beats || 0.25),
-          pxPerBeat: wordPxPerBeat,
+          pxPerBeat: getWordPxPerBeat(sel),
+          narrowOnClick: keepGroup && !resize,
           preSnapshot: captureSnapshot(),
           changed: false,
         };
-        renderWordLane();
         seekWithinSelectedLineFromClientX(e.clientX);
         e.preventDefault();
         return;
@@ -1604,11 +2504,12 @@
         const targets = dragState.origStarts || [];
         if (!targets.length) return;
         const minOrig = Math.min(...targets.map(t => t.origBeats));
-        const clampedDelta = Math.max(-minOrig, rawDelta);
+        const clampedDelta = Math.max(Math.min(0, gridPosition().firstBeat - minOrig), rawDelta);
         const anyMoved = targets.some(t => Math.abs((t.origBeats + clampedDelta) - lineStartBeatTotal(t.ln)) >= 0.25);
         if (anyMoved) {
           for (const t of targets) {
             setLineStartFromTotalBeats(t.ln, t.origBeats + clampedDelta);
+            t.ln.timing_edited = true;
           }
           dragState.changed = true;
           appState.dirty = true;
@@ -1621,63 +2522,23 @@
         const nextDur = Math.max(0.5, dragState.origDur + deltaDur);
         if (nextDur !== sel.duration_beats) {
           sel.duration_beats = nextDur;
+          sel.timing_edited = true;
           dragState.changed = true;
           appState.dirty = true;
           refreshAllViews(true);
         }
       } else if (dragState.type === "scrub-word-lane") {
         seekWithinSelectedLineFromClientX(e.clientX);
-      } else if (dragState.type === "resize-word") {
-        const sel = getSelectedScoreLine();
-        const w = sel?.words?.[dragState.idx];
-        if (!w) return;
-        const deltaDur = Math.round((dx / dragState.pxPerBeat) * 4) / 4;
-        const maxDur = Math.max(0.25, Number(sel.duration_beats) - Number(w.rel_beat || 0));
-        const nextDur = Math.max(0.25, Math.min(maxDur, Number((dragState.origDur + deltaDur).toFixed(2))));
-        if (nextDur !== Number(w.duration_beats || 0.25)) {
-          w.duration_beats = nextDur;
-          dragState.changed = true;
-          appState.dirty = true;
-          recomputeTimelineFromScore();
-          renderWordLane();
-          if (!appState.playing) {
-            const bpm = Number(appState.score.grid.bpm) || 120;
-            const beatSec = 60.0 / bpm;
-            const nextT = Math.max(sel.start, Math.min(sel.end, sel.start + (Number(w.rel_beat || 0) + nextDur) * beatSec));
-            appState.currentTime = nextT;
-            audioEl.currentTime = nextT;
-            scrubber.value = nextT;
-            syncRangeFallbackProgress(scrubber);
-            lblTime.textContent = `${fmtTime(nextT)} / ${fmtTime(audioEl.duration || 0)}`;
-          }
-          updateScorePlayhead();
-          updateVideoPreviewFrame();
-        }
-      } else if (dragState.type === "move-word") {
-        const sel = getSelectedScoreLine();
-        const w = sel?.words?.[dragState.idx];
-        if (!w) return;
-        const deltaBeats = Math.round((dx / dragState.pxPerBeat) * 4) / 4;
-        const nextRel = Math.max(0, Math.min(sel.duration_beats - 0.25, dragState.origRel + deltaBeats));
-        if (nextRel !== w.rel_beat) {
-          w.rel_beat = nextRel;
-          dragState.changed = true;
-          appState.dirty = true;
-          recomputeTimelineFromScore();
-          renderWordLane();
-          if (!appState.playing) {
-            const bpm = Number(appState.score.grid.bpm) || 120;
-            const beatSec = 60.0 / bpm;
-            const nextT = Math.max(sel.start, Math.min(sel.end, sel.start + nextRel * beatSec));
-            appState.currentTime = nextT;
-            audioEl.currentTime = nextT;
-            scrubber.value = nextT;
-            syncRangeFallbackProgress(scrubber);
-            lblTime.textContent = `${fmtTime(nextT)} / ${fmtTime(audioEl.duration || 0)}`;
-          }
-          updateScorePlayhead();
-          updateVideoPreviewFrame();
-        }
+      } else if (dragState.type === "edit-words") {
+        const line = getSelectedScoreLine();
+        if (line !== dragState.line) return;
+        const delta = Math.round((dx / dragState.pxPerBeat) * 4) / 4;
+        if (Math.abs(dx) >= 4) dragState.narrowOnClick = false;
+        if (!applyWordDelta(line, dragState.targets, delta, dragState.resize)) return;
+        dragState.changed = true;
+        const word = line.words[dragState.index];
+        const beat = Number(word.rel_beat ?? 0) + (dragState.resize ? Number(word.duration_beats ?? 0.25) : 0);
+        renderWordTimingEdit(line, beat);
       }
     });
 
@@ -1693,10 +2554,15 @@
       if (dragState) {
         if (dragState.changed && dragState.preSnapshot) {
           pushUndoSnapshot(dragState.preSnapshot);
-          const cnt = (dragState.origStarts || []).length;
-          setStatus(cnt > 1 && dragState.type === "move-line" ? `${cnt}줄 이동됨 (저장 전)` : "수정됨 (저장 전)");
+          if (dragState.type === "edit-words") {
+            setStatus(`단어 ${dragState.targets.length}개 ${dragState.resize ? "길이 조절" : "이동"}됨 (저장 전)`);
+          } else {
+            const count = dragState.origStarts?.length ?? 0;
+            setStatus(count > 1 && dragState.type === "move-line" ? `${count}줄 이동됨 (저장 전)` : "수정됨 (저장 전)");
+          }
         } else if (!dragState.changed && dragState.narrowOnClick) {
-          selectLine(dragState.id, false, { scrollToView: false });
+          if (dragState.type === "edit-words") selectWord(dragState.index);
+          else selectLine(dragState.id, false, { scrollToView: false });
         }
         dragState = null;
       }
@@ -1722,45 +2588,6 @@
     btnUndo.addEventListener("click", performUndo);
     btnRedo.addEventListener("click", performRedo);
 
-    document.getElementById("btn-reset-algo").addEventListener("click", async () => {
-      if (!confirm("수동 조절한 박자를 알고리즘 초기 박자로 초기화할까요? (초기화 후에도 '뒤로가기'로 이전 상태로 복구할 수 있습니다)")) {
-        return;
-      }
-      const prevSnap = captureSnapshot();
-      setStatus("알고리즘 박자로 초기화 중...");
-      try {
-        const res = await fetch(apiUrl("/api/reset_score"), {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({}),
-        });
-        const data = await res.json();
-        if (!res.ok || !data.ok) {
-          setStatus(data.error || "초기화 실패", true);
-          return;
-        }
-        pushUndoSnapshot(prevSnap);
-        appState.score = data.score;
-        appState.timeline = data.timeline;
-        appState.style = data.score.meta?.style || appState.style;
-        appState.contentScale = Number(data.score.meta?.content_scale ?? 1.18);
-
-        document.getElementById("inp-bpm").value = data.score.grid.bpm;
-        document.getElementById("inp-t0").value = data.score.grid.t0;
-        document.getElementById("sel-style").value = appState.style;
-        rngContentScale.value = appState.contentScale;
-        lblContentScale.textContent = `${Math.round(appState.contentScale * 100)}%`;
-        syncRangeFallbackProgress(rngContentScale);
-
-        appState.dirty = false;
-        buildVideoPreviewSkeleton();
-        refreshAllViews(true);
-        setStatus("알고리즘 초기 박자로 복원 및 저장 완료");
-      } catch (err) {
-        setStatus(String(err), true);
-      }
-    });
-
     document.querySelectorAll(".stage-size-btn").forEach((btn) => {
       btn.addEventListener("click", () => setStageSizePreset(btn.dataset.stageSize));
     });
@@ -1776,6 +2603,92 @@
       buildVideoPreviewSkeleton();
       updateVideoPreviewFrame();
       setStatus("영상 내부 비율 조정됨 (MP4 렌더링 시 동일 반영)");
+    });
+
+    function bindDisplaySwitch(el, key, metaKey, labelText) {
+      el.addEventListener("change", () => {
+        pushUndoSnapshot(captureSnapshot());
+        appState[key] = Boolean(el.checked);
+        applyDisplayMetaToScoreMeta();
+        if (key === "showWordHighlight") {
+          chkKaraokeSweep.disabled = !appState.showWordHighlight;
+          lblKaraokeSweep.classList.toggle("opacity-45", !appState.showWordHighlight);
+          lblKaraokeSweep.classList.toggle("cursor-not-allowed", !appState.showWordHighlight);
+        }
+        appState.dirty = true;
+        recomputeTimelineFromScore();
+        if (key === "showComment" || key === "showSongContext") {
+          buildVideoPreviewSkeleton();
+        } else {
+          rebuildPreviewRows();
+        }
+        updateVideoPreviewFrame();
+        setStatus(`${labelText} ${appState[key] ? "켜짐" : "꺼짐"} (저장 전)`);
+      });
+    }
+
+    bindDisplaySwitch(chkKaraokeSweep, "karaokeSweep", "karaoke_sweep", "가라오케 스윕");
+    bindDisplaySwitch(chkWordHighlight, "showWordHighlight", "show_word_highlight", "단어 강조");
+    bindDisplaySwitch(chkShowPron, "showPronunciation", "show_pronunciation", "발음 표시");
+    bindDisplaySwitch(document.getElementById("chk-smooth-scroll"), "smoothLyricScroll", "smooth_lyric_scroll", "부드러운 줄 스크롤");
+    bindDisplaySwitch(document.getElementById("chk-word-lift"), "lyricWordLift", "lyric_word_lift", "단어 들뜸");
+    bindDisplaySwitch(document.getElementById("chk-song-context"), "showSongContext", "show_song_context", "곡 해설과 문화");
+    bindDisplaySwitch(chkShowComment, "showComment", "show_comment", "학습 노트");
+
+    ["pointerdown", "focus"].forEach((evt) => {
+      inpAccentColor.addEventListener(evt, () => {
+        if (!appState.colorEditSnapshot) {
+          appState.colorEditSnapshot = captureSnapshot();
+        }
+      });
+    });
+    inpAccentColor.addEventListener("input", () => {
+      appState.accentColor = inpAccentColor.value.toLowerCase();
+      applyDisplayMetaToScoreMeta();
+      appState.dirty = true;
+      recomputeTimelineFromScore();
+      buildVideoPreviewSkeleton();
+      updateVideoPreviewFrame();
+      setStatus(`강조색 변경됨 (${appState.accentColor}) · 저장 전`);
+    });
+    ["change", "blur"].forEach((evt) => {
+      inpAccentColor.addEventListener(evt, () => {
+        if (appState.colorEditSnapshot && appState.colorEditSnapshot.scoreJson !== JSON.stringify(appState.score)) {
+          pushUndoSnapshot(appState.colorEditSnapshot);
+        }
+        appState.colorEditSnapshot = null;
+      });
+    });
+
+    document.getElementById("btn-reextract-accent").addEventListener("click", async () => {
+      const btn = document.getElementById("btn-reextract-accent");
+      btn.disabled = true;
+      setStatus("앨범 커버에서 강조색 재추출 중...");
+      try {
+        const res = await fetch(apiUrl("/api/reextract_accent"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ track: appState.trackSlug || undefined }),
+        });
+        const data = await res.json();
+        if (!res.ok || !data.ok) {
+          setStatus(data.error || "강조색 재추출 실패", true);
+          return;
+        }
+        pushUndoSnapshot(captureSnapshot());
+        appState.accentColor = data.accent_color;
+        inpAccentColor.value = data.accent_color;
+        applyDisplayMetaToScoreMeta();
+        appState.dirty = true;
+        recomputeTimelineFromScore();
+        buildVideoPreviewSkeleton();
+        updateVideoPreviewFrame();
+        setStatus(`커버 대표 강조색 재추출됨 (${data.accent_color}) · 저장 전`);
+      } catch (err) {
+        setStatus(String(err), true);
+      } finally {
+        btn.disabled = false;
+      }
     });
 
     document.getElementById("btn-toggle-whole").addEventListener("click", () => {
@@ -1830,175 +2743,273 @@
       if (appState.score?.meta) appState.score.meta.style = appState.style;
       appState.dirty = true;
       recomputeTimelineFromScore();
+      setStageSizePreset(appState.stageSize);
       buildVideoPreviewSkeleton();
       updateVideoPreviewFrame();
     });
 
-    async function requantizeWithServer(bpm, t0) {
-      setStatus(`새 박자(BPM ${bpm}, t0=${t0}s) 기준으로 보컬 가사 재배치 중...`);
+    document.getElementById("btn-clip-set-start").addEventListener("click", () => {
+      document.getElementById("inp-clip-start").value = appState.currentTime.toFixed(1);
+      setStatus(`클립 시작: ${appState.currentTime.toFixed(1)}s 설정됨`);
+    });
+    document.getElementById("btn-clip-set-end").addEventListener("click", () => {
+      document.getElementById("inp-clip-end").value = appState.currentTime.toFixed(1);
+      setStatus(`클립 끝: ${appState.currentTime.toFixed(1)}s 설정됨`);
+    });
+    document.getElementById("btn-clip-clear").addEventListener("click", () => {
+      document.getElementById("inp-clip-start").value = "";
+      document.getElementById("inp-clip-end").value = "";
+      setStatus("클립 구간 초기화됨 (전체 곡 렌더링)");
+    });
+
+    async function requantizeWithServer() {
+      if (!appState.score) return;
+      const before = captureSnapshot();
+      const { bpm, t0 } = appState.score.grid;
+      setStatus("가사 줄의 시작과 끝 계산 중...");
       try {
         const res = await fetch(apiUrl("/api/requantize"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            track: appState.trackSlug || undefined,
-            bpm,
-            t0,
-            score: appState.score,
-          }),
+          body: JSON.stringify({ bpm, t0, score: appState.score, preview: true, lines_only: true }),
         });
         const data = await res.json();
-        if (!res.ok || !data.ok) {
-          setStatus(data.error || "가사 재배치 실패", true);
-          return false;
+        if (!res.ok || !data.ok) throw new Error(data.error || "가사 재배치 실패");
+        if (JSON.stringify(appState.score) !== before.scoreJson) {
+          setStatus("계산 중 편집이 변경되었습니다. 다시 시도해 주세요.");
+          return;
         }
+        const after = new Map(data.timeline.lines.map(line => [line.id, line]));
+        let changed = 0;
+        let maxShift = 0;
+        for (const line of appState.timeline.lines) {
+          const proposed = after.get(line.id);
+          if (!proposed) continue;
+          const shift = Math.max(Math.abs(proposed.start - line.start), Math.abs(proposed.end - line.end));
+          if (shift > 0.002) changed++;
+          maxShift = Math.max(maxShift, shift);
+        }
+        const summary = changed + "줄 변경 · 줄 시작/종료 최대 " + Math.round(maxShift * 1000) + "ms";
+        if (!changed) {
+          setStatus("바뀐 줄 경계가 없습니다.");
+          return;
+        }
+        if (!window.confirm(summary + ". 적용할까요?")) {
+          setStatus("가사 재배치 취소");
+          return;
+        }
+        pushUndoSnapshot(before);
         appState.score = data.score;
-        appState.timeline = data.timeline;
-        document.getElementById("inp-bpm").value = appState.score.grid.bpm;
-        document.getElementById("inp-t0").value = appState.score.grid.t0;
-        appState.dirty = false;
-        appState.lastMetronomeBeat = -999;
+        appState.dirty = true;
         refreshAllViews(true);
-        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 적용 & 보컬 기준 가사 재배치 완료`);
-        return true;
+        setStatus(summary + " · 저장 전");
       } catch (err) {
         setStatus(String(err), true);
-        return false;
       }
     }
 
-    function preserveLyricsOntoGrid(newBpm, newT0) {
-      const score = appState.score;
-      if (!score) return;
-      const oldBpm = Number(score.grid.bpm) || 120;
-      const oldT0 = Number(score.grid.t0) || 0;
-      const bpb = (score.grid.time_signature && score.grid.time_signature[0]) || 4;
-      const oldBeatSec = 60.0 / oldBpm;
-      const newBeatSec = 60.0 / newBpm;
+    async function alignWordsWithVocals(allLines) {
+      if (!appState.score || appState.aligningWords) return;
+      const before = captureSnapshot();
+      const ids = allLines ? undefined : getSelectedScoreLines().map(line => line.id);
+      if (ids?.length === 0) return;
 
-      for (const ln of score.lines) {
-        const oldTotalBeats = (ln.bar - 1) * bpb + (ln.beat - 1.0);
-        const absStart = oldT0 + oldTotalBeats * oldBeatSec;
-        const absEnd = oldT0 + (oldTotalBeats + Number(ln.duration_beats || 1)) * oldBeatSec;
+      appState.aligningWords = true;
+      const allButton = document.getElementById("btn-align-words-all");
+      const review = document.getElementById("word-alignment-review");
+      allButton.disabled = true;
+      document.getElementById("btn-align-words-selected").disabled = true;
+      review.hidden = true;
+      setStatus("현재 줄 경계를 기준으로 단어를 보컬에 맞추는 중...");
+      try {
+        const response = await fetch(apiUrl("/api/align_words"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ score: appState.score, line_ids: ids }),
+        });
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "단어 정렬 실패");
+        if (JSON.stringify(appState.score) !== before.scoreJson) {
+          setStatus("정렬 중 편집이 변경되었습니다. 다시 시도해 주세요.");
+          return;
+        }
 
-        const newStartBeats = Math.max(0, Math.round(((absStart - newT0) / newBeatSec) * 2) / 2);
-        const newDurBeats = Math.max(0.5, Math.round(((absEnd - absStart) / newBeatSec) * 2) / 2);
-        setLineStartFromTotalBeats(ln, newStartBeats);
-        ln.duration_beats = Number(newDurBeats.toFixed(2));
+        const updates = new Map(result.updates.map(item => [item.id, item.words]));
+        if (updates.size) {
+          pushUndoSnapshot(before);
+          for (const line of appState.score.lines) {
+            if (!updates.has(line.id)) continue;
+            line.words = updates.get(line.id);
+            line.word_alignment = "ctc";
+            delete line.word_timing_edited;
+          }
+          resetWordSelection();
+          appState.dirty = true;
+          recomputeTimelineFromScore();
+          rebuildPreviewRows();
+          refreshAllViews(true);
+        }
 
-        if (Array.isArray(ln.words) && ln.words.length) {
-          const lineNewStartSec = newT0 + newStartBeats * newBeatSec;
-          for (const w of ln.words) {
-            const wAbsStart = absStart + Number(w.rel_beat || 0) * oldBeatSec;
-            const wAbsEnd = wAbsStart + Number(w.duration_beats || 0.25) * oldBeatSec;
-            const newRel = Math.max(0, Math.min(ln.duration_beats - 0.25, Math.round(((wAbsStart - lineNewStartSec) / newBeatSec) * 4) / 4));
-            const maxDur = Math.max(0.25, ln.duration_beats - newRel);
-            const newWDur = Math.max(0.25, Math.min(maxDur, Math.round(((wAbsEnd - wAbsStart) / newBeatSec) * 4) / 4));
-            w.rel_beat = Number(newRel.toFixed(2));
-            w.duration_beats = Number(newWDur.toFixed(2));
+        if (result.review.length) {
+          const labels = result.review.map(id => "#" + String(id).padStart(2, "0"));
+          review.textContent = "단어 검수 필요 " + labels.join(", ");
+          review.hidden = false;
+        }
+        const mode = result.audio_source === "mix" ? "원곡 사용 · " : "";
+        setStatus(mode + `단어 정렬 ${updates.size}줄 · 검수 필요 ${result.review.length}줄 · 제외 ${result.excluded}줄${updates.size ? " · 저장 전" : ""}`);
+      } catch (err) {
+        setStatus(String(err), true);
+      } finally {
+        appState.aligningWords = false;
+        allButton.disabled = false;
+        renderWordLane();
+      }
+    }
+
+    function changeBeatGrid(bpm, t0, downbeatOffset, margin) {
+      const old = gridPosition();
+      const grid = appState.score.grid;
+      if (!Number.isFinite(bpm) || bpm < 40 || bpm > 240 || !Number.isFinite(t0) || t0 < -2 || t0 > 30) {
+        document.getElementById("inp-bpm").value = grid.bpm;
+        document.getElementById("inp-t0").value = grid.t0;
+        setStatus("BPM(40~240)과 박자 위치를 확인하세요.", true);
+        return;
+      }
+      if (bpm === grid.bpm && t0 === grid.t0 && downbeatOffset === old.offset && margin === undefined) return;
+      pushUndoSnapshot(captureSnapshot());
+      if (bpm !== grid.bpm || t0 !== grid.t0) {
+        const period = 60 / bpm;
+        const ratio = old.period / period;
+        for (const line of appState.score.lines) {
+          const beat = (old.t0 - t0) / period + lineStartBeatTotal(line) * ratio;
+          setLineStartFromTotalBeats(line, beat);
+          line.duration_beats *= ratio;
+          for (const word of line.words || []) {
+            if (word.rel_beat != null) word.rel_beat *= ratio;
+            if (word.duration_beats != null) word.duration_beats *= ratio;
           }
         }
       }
-      score.grid.bpm = Number(newBpm.toFixed(2));
-      score.grid.t0 = Number(newT0.toFixed(4));
-      document.getElementById("inp-bpm").value = score.grid.bpm;
-      document.getElementById("inp-t0").value = score.grid.t0;
+      Object.assign(grid, { bpm, t0, downbeat_offset: modulo(downbeatOffset, old.beatsPerBar) });
+      if (margin === undefined) delete grid.downbeat_margin;
+      else grid.downbeat_margin = margin;
+      document.getElementById("inp-bpm").value = bpm;
+      document.getElementById("inp-t0").value = t0;
       appState.dirty = true;
-      appState.lastMetronomeBeat = -999;
+      resetMetronome();
       refreshAllViews(true);
+      setStatus("박자 변경 · 가사 시각 유지 · 저장 전");
     }
 
-    async function applyBeatGridChange(newBpm, newT0) {
-      const preSnap = captureSnapshot();
-      const mode = document.getElementById("sel-realign-mode").value;
-      if (mode === "vocals") {
-        const ok = await requantizeWithServer(newBpm, newT0);
-        if (ok) pushUndoSnapshot(preSnap);
-      } else if (mode === "preserve") {
-        pushUndoSnapshot(preSnap);
-        preserveLyricsOntoGrid(newBpm, newT0);
-        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 적용 (현재 가사 위치 유지 스냅)`);
-      } else {
-        pushUndoSnapshot(preSnap);
-        appState.score.grid.bpm = Number(newBpm.toFixed(2));
-        appState.score.grid.t0 = Number(newT0.toFixed(4));
-        document.getElementById("inp-bpm").value = appState.score.grid.bpm;
-        document.getElementById("inp-t0").value = appState.score.grid.t0;
-        appState.dirty = true;
-        appState.lastMetronomeBeat = -999;
-        refreshAllViews(true);
-        setStatus(`BPM ${appState.score.grid.bpm}, t0=${appState.score.grid.t0}s 그리드만 이동됨`);
-      }
+    function changeDownbeat(index) {
+      const { bpm, t0 } = appState.score.grid;
+      changeBeatGrid(bpm, t0, index);
     }
 
     function updateTapButtonLabel() {
-      const btn = document.getElementById("btn-tap-beat");
-      if (btn) btn.textContent = `4박 탭 (B · ${appState.tapBeats.length}/4)`;
+      document.getElementById("btn-tap-beat").textContent = "1박 탭 맞춤 (B · " + appState.tapBeats.length + "/4)";
     }
 
-    async function handleFourBeatTap() {
-      const nowWall = performance.now() / 1000;
-      const last = appState.tapBeats[appState.tapBeats.length - 1];
-      if (last && (nowWall - last.wall) > 2.5) {
+    function handleFourBeatTap() {
+      if (!appState.playing || !appState.score) return;
+      const { t0, period } = gridPosition();
+      const time = audioEl.currentTime;
+      const last = appState.tapBeats.at(-1);
+      if (last != null && Math.abs(time - last - period) > period * 0.45) appState.tapBeats = [];
+      appState.tapBeats.push(time);
+      if (appState.tapBeats.length === 4) {
+        const average = appState.tapBeats.reduce((sum, tap, idx) => sum + tap - idx * period, 0) / 4;
+        changeDownbeat(Math.round((average - t0) / period));
         appState.tapBeats = [];
       }
-      appState.tapBeats.push({
-        wall: nowWall,
-        audio: audioEl.currentTime,
-        playing: !audioEl.paused,
-      });
       updateTapButtonLabel();
-
-      if (appState.tapBeats.length < 4) {
-        setStatus(`4박 탭 ${appState.tapBeats.length}/4 (음악 박자에 맞춰 계속 눌러주세요)`);
-        return;
-      }
-
-      const taps = appState.tapBeats.slice(-4);
-      appState.tapBeats = [];
-      updateTapButtonLabel();
-
-      const allPlaying = taps.every(t => t.playing) && taps[3].audio > taps[0].audio + 0.3;
-      const span = allPlaying ? (taps[3].audio - taps[0].audio) : (taps[3].wall - taps[0].wall);
-      const beatSec = span / 3.0;
-      let newBpm = Math.max(40, Math.min(240, 60.0 / Math.max(0.2, beatSec)));
-      const snappedHalf = Math.round(newBpm * 2) / 2;
-      if (Math.abs(newBpm - snappedHalf) <= 0.2) newBpm = snappedHalf;
-      else newBpm = Math.round(newBpm * 10) / 10;
-
-      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
-      const barSec = bpb * (60.0 / newBpm);
-      let newT0 = Number(appState.score.grid.t0) || 0;
-      if (allPlaying) {
-        // Fold tap 1 (Beat 1) back by full bars into [0, barSec)
-        newT0 = ((taps[0].audio % barSec) + barSec) % barSec;
-      }
-      await applyBeatGridChange(newBpm, newT0);
     }
 
+    document.getElementById("btn-shift-beat-prev").addEventListener("click", () => changeDownbeat(gridPosition().offset - 1));
+    document.getElementById("btn-shift-beat-next").addEventListener("click", () => changeDownbeat(gridPosition().offset + 1));
     document.getElementById("btn-tap-beat").addEventListener("click", handleFourBeatTap);
-    document.getElementById("btn-set-downbeat").addEventListener("click", async () => {
-      const bpm = Number(appState.score.grid.bpm) || 120;
-      const bpb = (appState.score.grid.time_signature && appState.score.grid.time_signature[0]) || 4;
-      const barSec = bpb * (60.0 / bpm);
-      const t = audioEl.currentTime || 0;
-      const newT0 = ((t % barSec) + barSec) % barSec;
-      await applyBeatGridChange(bpm, newT0);
+    document.getElementById("btn-set-downbeat").addEventListener("click", () => {
+      const { t0, period } = gridPosition();
+      changeDownbeat(Math.round((audioEl.currentTime - t0) / period));
     });
-    document.getElementById("btn-requantize-now").addEventListener("click", async () => {
-      pushUndoSnapshot(captureSnapshot());
-      const bpm = Number(document.getElementById("inp-bpm").value) || appState.score.grid.bpm;
-      const t0 = Number(document.getElementById("inp-t0").value) ?? appState.score.grid.t0;
-      await requantizeWithServer(bpm, t0);
+    document.getElementById("btn-requantize-now").addEventListener("click", requantizeWithServer);
+    document.getElementById("btn-align-words-all").addEventListener("click", () => alignWordsWithVocals(true));
+    document.getElementById("btn-align-words-selected").addEventListener("click", () => alignWordsWithVocals(false));
+    document.getElementById("inp-bpm").addEventListener("change", (event) => {
+      const { t0, offset } = gridPosition();
+      changeBeatGrid(event.target.valueAsNumber, t0, offset);
+    });
+    document.getElementById("inp-t0").addEventListener("change", (event) => {
+      changeBeatGrid(appState.score.grid.bpm, event.target.valueAsNumber, gridPosition().offset);
     });
 
-    document.getElementById("inp-bpm").addEventListener("change", async (e) => {
-      const nextBpm = Number(e.target.value) || 120;
-      await applyBeatGridChange(nextBpm, Number(appState.score.grid.t0) || 0);
+    document.getElementById("btn-reset-algo").addEventListener("click", async (event) => {
+      if (!appState.score) return;
+      const button = event.currentTarget;
+      const before = captureSnapshot();
+      button.disabled = true;
+      setStatus("현재 BPM으로 원곡의 박자 위치를 분석 중...");
+      try {
+        const response = await fetch(apiUrl("/api/reanalyze_beat_grid"), {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ score: appState.score }),
+        });
+        if (!response.headers.get("Content-Type")?.includes("application/json")) {
+          throw new Error(response.status === 404
+            ? "스튜디오 서버를 다시 시작한 후 자동 박자 분석을 사용할 수 있습니다."
+            : "자동 박자 분석 요청 실패");
+        }
+        const result = await response.json();
+        if (!response.ok || !result.ok) throw new Error(result.error || "박자 분석 실패");
+        if (JSON.stringify(appState.score) !== before.scoreJson) {
+          setStatus("분석 중 편집 내용이 바뀌었습니다. 다시 분석해 주세요.");
+          return;
+        }
+
+        pushUndoSnapshot(before);
+        appState.score = result.score;
+        appState.dirty = true;
+        document.getElementById("inp-t0").value = result.score.grid.t0;
+        resetMetronome();
+        refreshAllViews(true);
+        setStatus("자동 박자 적용 · 가사 시각 유지 · 저장 전");
+      } catch (err) {
+        setStatus(String(err), true);
+      } finally {
+        button.disabled = false;
+      }
     });
-    document.getElementById("inp-t0").addEventListener("change", async (e) => {
-      const nextT0 = Number(e.target.value) || 0;
-      await applyBeatGridChange(Number(appState.score.grid.bpm) || 120, nextT0);
+
+    document.getElementById("btn-beat-home").addEventListener("click", () => {
+      audioEl.currentTime = 0;
+      appState.currentTime = 0;
+      scoreWrap.scrollLeft = 0;
+      scrubber.value = 0;
+      syncRangeFallbackProgress(scrubber);
+      lblTime.textContent = "0:00.0 / " + fmtTime(audioEl.duration || 0);
+      updateScorePlayhead();
+      updateVideoPreviewFrame();
+    });
+
+    document.getElementById("btn-beat-loop").addEventListener("click", (event) => {
+      const btn = event.currentTarget;
+      const grid = gridPosition();
+      if (appState.beatLoop) {
+        appState.beatLoop = null;
+      } else {
+        const beat = (audioEl.currentTime - grid.t0) / grid.period;
+        const bar = Math.floor((beat - grid.firstDownbeat) / grid.beatsPerBar);
+        const downbeat = grid.t0 + (grid.firstDownbeat + bar * grid.beatsPerBar) * grid.period;
+        const start = Math.max(0, downbeat);
+        const end = Math.min(audioEl.duration, downbeat + 4 * grid.beatsPerBar * grid.period);
+        if (!Number.isFinite(end) || end <= start) return;
+        appState.beatLoop = { start, end };
+        audioEl.currentTime = start;
+        audioEl.play().catch(err => setStatus(String(err), true));
+      }
+      btn.setAttribute("aria-pressed", String(Boolean(appState.beatLoop)));
+      btn.textContent = appState.beatLoop ? "반복 끄기" : "4마디 반복";
     });
 
     document.getElementById("btn-select-all").addEventListener("click", selectAllLines);
@@ -2028,23 +3039,24 @@
       pushUndoSnapshot(captureSnapshot());
       const bpm = Number(appState.score.grid.bpm) || 120;
       const t0 = Number(appState.score.grid.t0) || 0;
-      const targetBeats = Math.max(0, Math.round(((appState.currentTime - t0) / (60.0 / bpm)) * 2) / 2);
+      const targetBeats = Math.max(Math.floor(gridPosition().firstBeat * 2) / 2, Math.round(((appState.currentTime - t0) / (60.0 / bpm)) * 2) / 2);
       const delta = targetBeats - lineStartBeatTotal(sel);
       const targets = getSelectedScoreLines();
       const minOrig = Math.min(...targets.map(l => lineStartBeatTotal(l)));
-      const appliedDelta = Math.max(-minOrig, delta);
+      const appliedDelta = Math.max(Math.min(0, gridPosition().firstBeat - minOrig), delta);
       for (const ln of targets) {
         setLineStartFromTotalBeats(ln, lineStartBeatTotal(ln) + appliedDelta);
+        ln.timing_edited = true;
       }
       appState.dirty = true;
       setStatus(targets.length > 1 ? `${targets.length}줄 기준 현 위치 0.5박 스냅됨` : "현재 재생 위치로 0.5박 스냅됨");
       refreshAllViews(true);
     });
 
-    document.getElementById("btn-word-back").addEventListener("click", () => nudgeSelectedWord(-0.25, 0));
-    document.getElementById("btn-word-fwd").addEventListener("click", () => nudgeSelectedWord(0.25, 0));
-    document.getElementById("btn-word-dur-short").addEventListener("click", () => nudgeSelectedWord(0, -0.25));
-    document.getElementById("btn-word-dur-long").addEventListener("click", () => nudgeSelectedWord(0, 0.25));
+    document.getElementById("btn-word-back").addEventListener("click", () => nudgeSelectedWords(-0.25));
+    document.getElementById("btn-word-fwd").addEventListener("click", () => nudgeSelectedWords(0.25));
+    document.getElementById("btn-word-dur-short").addEventListener("click", () => nudgeSelectedWords(-0.25, true));
+    document.getElementById("btn-word-dur-long").addEventListener("click", () => nudgeSelectedWords(0.25, true));
     document.getElementById("btn-word-even").addEventListener("click", () => {
       const sel = getSelectedScoreLine();
       if (!sel || sel.whole_line || !sel.words || !sel.words.length) return;
@@ -2054,6 +3066,7 @@
         w.rel_beat = Number((i * step).toFixed(3));
         w.duration_beats = Number(step.toFixed(3));
       });
+      sel.word_timing_edited = true;
       appState.dirty = true;
       setStatus("단어 균등 분배됨");
       recomputeTimelineFromScore();
@@ -2076,7 +3089,14 @@
       el.addEventListener("input", () => {
         const sel = getSelectedScoreLine();
         if (!sel) return;
-        sel.original = document.getElementById("edit-original").value;
+        const nextOriginal = document.getElementById("edit-original").value;
+        sel.original = nextOriginal;
+        if (id === "edit-original") {
+          const previousCount = sel.words?.length ?? 0;
+          syncWordsWithOriginal(sel, nextOriginal);
+          sel.word_timing_edited = true;
+          if (sel.words.length !== previousCount) resetWordSelection();
+        }
         sel.pronunciation = document.getElementById("edit-pron").value;
         sel.translation = document.getElementById("edit-trans").value;
         appState.dirty = true;
@@ -2084,9 +3104,28 @@
         rebuildPreviewRows();
         renderLyricList();
         renderScoreLane();
+        if (id === "edit-original") renderWordLane();
         updateVideoPreviewFrame();
       });
     });
+
+    function buildPersistPayload() {
+      applyDisplayMetaToScoreMeta();
+      return {
+        track: appState.trackSlug || undefined,
+        score: appState.score,
+        style: appState.style,
+        content_scale: appState.contentScale,
+        accent_color: appState.accentColor,
+        karaoke_sweep: appState.karaokeSweep,
+        show_word_highlight: appState.showWordHighlight,
+        show_pronunciation: appState.showPronunciation,
+        show_comment: appState.showComment,
+        show_song_context: appState.showSongContext,
+        lyric_word_lift: appState.lyricWordLift,
+        smooth_lyric_scroll: appState.smoothLyricScroll,
+      };
+    }
 
     // Save & Render APIs
     async function saveScore() {
@@ -2094,12 +3133,7 @@
       const res = await fetch(apiUrl("/api/save"), {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          track: appState.trackSlug || undefined,
-          score: appState.score,
-          style: appState.style,
-          content_scale: appState.contentScale,
-        }),
+        body: JSON.stringify(buildPersistPayload()),
       });
       const data = await res.json();
       if (!res.ok || !data.ok) {
@@ -2146,25 +3180,26 @@
     document.getElementById("btn-render").addEventListener("click", async () => {
       const btn = document.getElementById("btn-render");
       btn.disabled = true;
-      btn.textContent = "MP4 렌더링 중...";
-      setStatus("저장 후 Remotion + FFmpeg 렌더링 중 (수 분 소요 가능)...");
+      btn.textContent = "렌더링 요청 중...";
+      setStatus("저장하고 렌더링 대기열에 추가하는 중...");
       try {
+        const payload = { ...buildPersistPayload(), queue: true };
+        const rawCs = document.getElementById("inp-clip-start").value.trim();
+        const rawCe = document.getElementById("inp-clip-end").value.trim();
+        if (rawCs !== "") payload.clip_start = Number(rawCs);
+        if (rawCe !== "") payload.clip_end = Number(rawCe);
+
         const res = await fetch(apiUrl("/api/render"), {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            track: appState.trackSlug || undefined,
-            score: appState.score,
-            style: appState.style,
-            content_scale: appState.contentScale,
-          }),
+          body: JSON.stringify(payload),
         });
         const data = await res.json();
         if (!res.ok || !data.ok) {
           setStatus(data.error || "렌더링 실패", true);
         } else {
           appState.dirty = false;
-          setStatus(`렌더링 완료: ${data.output_path}`);
+          setStatus("MP4 렌더링 대기열 추가 · 대시보드에서 진행과 일시정지 확인");
         }
       } catch (err) {
         setStatus(String(err), true);
@@ -2174,8 +3209,16 @@
       }
     });
 
+    window.addEventListener("beforeunload", (e) => {
+      if (appState.dirty) {
+        e.preventDefault();
+        e.returnValue = "";
+      }
+    });
+
     // Keyboard shortcuts
     window.addEventListener("keydown", (e) => {
+      if (document.querySelector("dialog[open]")) return;
       const isCtrl = e.ctrlKey || e.metaKey;
       const inField = e.target.tagName === "INPUT" || e.target.tagName === "TEXTAREA" || e.target.tagName === "SELECT";
       if (isCtrl && e.key.toLowerCase() === "z" && !inField) {
@@ -2191,7 +3234,16 @@
       }
       if (isCtrl && e.key.toLowerCase() === "a" && !inField) {
         e.preventDefault();
-        selectAllLines();
+        const line = getSelectedScoreLine();
+        if (e.target instanceof Element && e.target.closest("#word-editor") && line && !line.whole_line) {
+          const indices = (line.words || []).map((_, index) => index);
+          if (indices.length) {
+            setWordSelection(indices, appState.selectedWordIdx ?? 0);
+            renderWordLane();
+          }
+        } else {
+          selectAllLines();
+        }
         return;
       }
       if (inField) return;
@@ -2211,7 +3263,10 @@
         e.preventDefault();
         handleFourBeatTap();
       } else if (e.key === "Escape") {
-        if (appState.selectedLineIds.size > 1) {
+        if (e.target instanceof Element && e.target.closest("#word-editor") && appState.selectedWordIndices.size > 1) {
+          selectWord(appState.selectedWordIdx);
+          setStatus("단어 다중 선택 해제됨");
+        } else if (appState.selectedLineIds.size > 1) {
           selectLine(appState.selectedLineId, false, { scrollToView: false });
           setStatus("다중 선택 해제됨");
         }
@@ -2220,6 +3275,9 @@
 
     function animLoop() {
       if (!audioEl.paused) {
+        if (appState.beatLoop && audioEl.currentTime >= appState.beatLoop.end) {
+          audioEl.currentTime = appState.beatLoop.start;
+        }
         appState.currentTime = audioEl.currentTime;
         scrubber.value = appState.currentTime;
         syncRangeFallbackProgress(scrubber);
@@ -2243,17 +3301,16 @@
       appState.score = data.score;
       appState.timeline = data.timeline;
       appState.spectrum = await specRes.json();
-      appState.style = data.score.meta?.style || "minimal";
-      appState.contentScale = Number(data.score.meta?.content_scale ?? 1.18);
+      fetch(apiUrl("/api/waveform")).then(res => res.ok ? res.json() : null).then(data => {
+        appState.waveform = data;
+        drawScoreWaveform();
+      }).catch(() => {});
+      syncDisplayControlsFromMeta(data.score.meta || {});
 
       document.getElementById("hdr-title").textContent =
         `${data.score.meta?.title || data.track_name} — ${data.score.meta?.artist || ""}`;
       document.getElementById("inp-bpm").value = data.score.grid.bpm;
       document.getElementById("inp-t0").value = data.score.grid.t0;
-      document.getElementById("sel-style").value = appState.style;
-      rngContentScale.value = appState.contentScale;
-      lblContentScale.textContent = `${Math.round(appState.contentScale * 100)}%`;
-      syncRangeFallbackProgress(rngContentScale);
 
       audioEl.src = mediaUrl("master_audio.m4a");
       audioEl.addEventListener("loadedmetadata", () => {

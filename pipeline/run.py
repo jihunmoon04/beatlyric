@@ -24,6 +24,8 @@ from step5_enrich import (
     resolve_gemini_api_key,
 )
 from studio_server import serve_forever
+from studio_state import StudioQueueManager
+from word_alignment import run_automatic_word_alignment
 
 
 def cmd_prepare(args: argparse.Namespace) -> None:
@@ -34,7 +36,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     slug = slugify(args.name or input_path.stem)
     work_dir = WORK_DIR / slug
 
-    print(f"[1/4] Ingesting '{input_path.name}' -> {work_dir}")
+    print(f"[1/5] Ingesting '{input_path.name}' -> {work_dir}")
     meta = run_ingest(
         input_path=input_path,
         work_dir=work_dir,
@@ -44,7 +46,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
     )
 
     lyrics_path = Path(args.lyrics).resolve() if args.lyrics else None
-    print(f"[2/4] Aligning lyrics (lang={args.lang}, demucs={not args.no_demucs}, aligner={args.aligner})")
+    print(f"[2/5] Aligning lyrics (lang={args.lang}, demucs={not args.no_demucs}, aligner={args.aligner})")
     llm_payload = run_align(
         work_dir=work_dir,
         meta=meta,
@@ -55,7 +57,7 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         aligner=args.aligner,
     )
 
-    print(f"[3/4] Extracting audio spectrum ({args.fps} fps, 28 bars)")
+    print(f"[3/5] Extracting audio spectrum ({args.fps} fps, 28 bars)")
     extract_spectrum(
         wav_path=work_dir / "analysis.wav",
         out_path=work_dir / "spectrum.json",
@@ -63,8 +65,10 @@ def cmd_prepare(args: argparse.Namespace) -> None:
         num_bars=28,
     )
 
-    print("[4/4] Estimating BPM & quantizing vocal-guided 0.5-beat score.json")
+    print("[4/5] Estimating BPM and fixing lyric line boundaries")
     score = ensure_score_file(work_dir, force=True)
+    print("[5/5] Aligning words inside fixed lyric lines")
+    run_automatic_word_alignment(work_dir, isolate_vocals=not args.no_demucs)
     export_llm_prompt_bundle(work_dir)
     grid = score["grid"]
 
@@ -125,7 +129,7 @@ def cmd_auto(args: argparse.Namespace) -> None:
     slug = slugify(args.name or input_path.stem)
     work_dir = WORK_DIR / slug
 
-    print(f"[1/5] Ingesting '{input_path.name}' -> {work_dir}")
+    print(f"[1/6] Ingesting '{input_path.name}' -> {work_dir}")
     meta = run_ingest(
         input_path=input_path,
         work_dir=work_dir,
@@ -135,7 +139,7 @@ def cmd_auto(args: argparse.Namespace) -> None:
     )
 
     lyrics_path = Path(args.lyrics).resolve() if args.lyrics else None
-    print(f"[2/5] Aligning lyrics (lang={args.lang}, demucs={not args.no_demucs}, aligner={args.aligner})")
+    print(f"[2/6] Aligning lyrics (lang={args.lang}, demucs={not args.no_demucs}, aligner={args.aligner})")
     run_align(
         work_dir=work_dir,
         meta=meta,
@@ -146,7 +150,7 @@ def cmd_auto(args: argparse.Namespace) -> None:
         aligner=args.aligner,
     )
 
-    print(f"[3/5] Extracting audio spectrum ({args.fps} fps, 28 bars)")
+    print(f"[3/6] Extracting audio spectrum ({args.fps} fps, 28 bars)")
     extract_spectrum(
         wav_path=work_dir / "analysis.wav",
         out_path=work_dir / "spectrum.json",
@@ -154,11 +158,13 @@ def cmd_auto(args: argparse.Namespace) -> None:
         num_bars=28,
     )
 
-    print("[4/5] Estimating BPM & quantizing vocal-guided 0.5-beat score.json")
+    print("[4/6] Estimating BPM and fixing lyric line boundaries")
     ensure_score_file(work_dir, force=True)
+    print("[5/6] Aligning words inside fixed lyric lines")
+    run_automatic_word_alignment(work_dir, isolate_vocals=not args.no_demucs)
     export_llm_prompt_bundle(work_dir)
 
-    print("[5/5] Linguistic enrichment (pronunciation / translation / learning comments)")
+    print("[6/6] Linguistic enrichment (pronunciation / translation / learning comments)")
     api_key = resolve_gemini_api_key(args.api_key)
     if args.annotations:
         ann = _load_json_file(Path(args.annotations).resolve())
@@ -229,8 +235,24 @@ def cmd_render(args: argparse.Namespace) -> None:
         crf=args.crf,
         gl=args.gl,
         keep_silent=args.keep_silent,
+        clip_start=args.clip_start,
+        clip_end=args.clip_end,
     )
     print(f"\nDONE! Final video saved to: {final_mp4}")
+
+
+def cmd_delete(args: argparse.Namespace) -> None:
+    raw = str(args.target).strip().rstrip("/\\")
+    cand_path = Path(raw)
+    slug = cand_path.name if (cand_path.is_dir() or "/" in raw or "\\" in raw) else resolve_work_dir(raw).name
+    if not args.yes:
+        ans = input(f"Delete project '{slug}'? [y/N]: ").strip().lower()
+        if ans not in {"y", "yes"}:
+            print("Cancelled.")
+            return
+    res = StudioQueueManager().delete_track(slug, delete_output=bool(args.delete_output))
+    outputs = ", ".join(res["deleted_outputs"]) if res["deleted_outputs"] else "none"
+    print(f"Deleted project '{res['slug']}' (work_dir_removed={res['deleted_work_dir']}, outputs_removed={outputs})")
 
 
 def main() -> None:
@@ -279,6 +301,8 @@ def main() -> None:
     p_ren.add_argument("--crf", type=int, default=18, help="Video quality CRF (lower = higher quality)")
     p_ren.add_argument("--gl", help="Remotion Chromium GL backend (e.g., swiftshader on headless Linux)")
     p_ren.add_argument("--keep-silent", action="store_true", help="Keep intermediate silent MP4")
+    p_ren.add_argument("--clip-start", type=float, default=None, help="Optional clip start time in seconds")
+    p_ren.add_argument("--clip-end", type=float, default=None, help="Optional clip end time in seconds")
     p_ren.set_defaults(func=cmd_render)
 
     p_enr = sub.add_parser("enrich", help="Merge LLM annotations JSON or auto-generate via agy acp / Gemini API")
@@ -310,6 +334,12 @@ def main() -> None:
     p_auto.add_argument("--output", help="Default output .mp4 path when rendering from studio")
     p_auto.add_argument("--no-browser", action="store_true", help="Do not auto-open browser tab")
     p_auto.set_defaults(func=cmd_auto)
+
+    p_del = sub.add_parser("delete", help="Delete a project work directory and optional rendered MP4s")
+    p_del.add_argument("target", help="Work directory path (work/<slug>) or track slug")
+    p_del.add_argument("--delete-output", action="store_true", help="Also delete rendered output/<slug>_*.mp4 files")
+    p_del.add_argument("-y", "--yes", action="store_true", help="Skip interactive confirmation prompt")
+    p_del.set_defaults(func=cmd_delete)
 
     args = parser.parse_args()
     args.func(args)

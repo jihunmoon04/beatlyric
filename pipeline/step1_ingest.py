@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import colorsys
 import io
+import math
 from pathlib import Path
 from typing import Any
 
@@ -87,26 +89,79 @@ def _create_fallback_cover(cover_out: Path) -> None:
     img.save(cover_out, "JPEG", quality=92)
 
 
+def _relative_luminance(rgb: tuple[int, int, int]) -> float:
+    """Compute WCAG 2.x relative luminance for an sRGB (0..255) triple."""
+    channels = []
+    for c in rgb:
+        s = c / 255.0
+        channels.append(s / 12.92 if s <= 0.04045 else ((s + 0.055) / 1.055) ** 2.4)
+    return 0.2126 * channels[0] + 0.7152 * channels[1] + 0.0722 * channels[2]
+
+
+def _contrast_ratio(rgb1: tuple[int, int, int], rgb2: tuple[int, int, int]) -> float:
+    l1 = _relative_luminance(rgb1)
+    l2 = _relative_luminance(rgb2)
+    hi, lo = max(l1, l2), min(l1, l2)
+    return (hi + 0.05) / (lo + 0.05)
+
+
 def _extract_dominant_accent(cover_path: Path) -> str:
-    """Compute a restrained, readable accent hex color from the cover image."""
+    """Extract dominant cover hue via 24-bin HSL/HSV histogram with >= 5.5 WCAG contrast vs #0c0a0f."""
     img = Image.open(cover_path).convert("RGB").resize((64, 64))
     pixels = list(img.getdata())
-    # Pick pixels with moderate saturation/brightness so accent stays tasteful
-    candidates = [
-        (r, g, b)
-        for (r, g, b) in pixels
-        if (max(r, g, b) - min(r, g, b)) > 35 and 60 < (r + g + b) / 3 < 210
-    ]
-    if not candidates:
+
+    bins: list[list[tuple[float, float, float]]] = [[] for _ in range(24)]
+    bin_weights = [0.0] * 24
+    chromatic_count = 0
+
+    for r, g, b in pixels:
+        rf, gf, bf = r / 255.0, g / 255.0, b / 255.0
+        h, l_val, s_hls = colorsys.rgb_to_hls(rf, gf, bf)
+        _, s_hsv, v_hsv = colorsys.rgb_to_hsv(rf, gf, bf)
+        if s_hsv < 0.22 or v_hsv < 0.20 or l_val < 0.12 or l_val > 0.92:
+            continue
+        chromatic_count += 1
+        weight = s_hsv * (0.4 + 0.6 * v_hsv)
+        bin_idx = int(h * 24.0) % 24
+        bins[bin_idx].append((h, s_hls, weight))
+        bin_weights[bin_idx] += weight
+
+    if chromatic_count < 12:
         return "#d88392"
-    avg_r = sum(p[0] for p in candidates) // len(candidates)
-    avg_g = sum(p[1] for p in candidates) // len(candidates)
-    avg_b = sum(p[2] for p in candidates) // len(candidates)
-    # Soften brightness into an editorial muted rose/pastel range
-    r = min(240, max(150, int(avg_r * 0.7 + 75)))
-    g = min(220, max(110, int(avg_g * 0.7 + 45)))
-    b = min(225, max(120, int(avg_b * 0.7 + 55)))
-    return f"#{r:02x}{g:02x}{b:02x}"
+
+    best_bin = max(range(24), key=lambda idx: bin_weights[idx])
+    selected: list[tuple[float, float, float]] = []
+    for offset in (-1, 0, 1):
+        selected.extend(bins[(best_bin + offset) % 24])
+
+    if not selected:
+        return "#d88392"
+
+    total_w = sum(w for _, _, w in selected) or 1.0
+    sin_sum = sum(w * math.sin(2.0 * math.pi * h) for h, _, w in selected)
+    cos_sum = sum(w * math.cos(2.0 * math.pi * h) for h, _, w in selected)
+    mean_h = (math.atan2(sin_sum, cos_sum) / (2.0 * math.pi)) % 1.0
+    mean_s = sum(w * s for _, s, w in selected) / total_w
+    clamped_s = max(0.42, min(0.78, mean_s))
+
+    bg_rgb = (12, 10, 15)
+    lightness = 0.66
+    out_rgb = (216, 131, 146)
+    while True:
+        rf, gf, bf = colorsys.hls_to_rgb(mean_h, lightness, clamped_s)
+        out_rgb = (
+            max(0, min(255, int(round(rf * 255)))),
+            max(0, min(255, int(round(gf * 255)))),
+            max(0, min(255, int(round(bf * 255)))),
+        )
+        if _contrast_ratio(out_rgb, bg_rgb) >= 5.5 or lightness >= 0.82:
+            break
+        lightness = round(lightness + 0.02, 4)
+
+    return f"#{out_rgb[0]:02x}{out_rgb[1]:02x}{out_rgb[2]:02x}"
+
+
+extract_dominant_accent = _extract_dominant_accent
 
 
 def _build_preblurred_background(cover_path: Path, bg_out: Path) -> None:

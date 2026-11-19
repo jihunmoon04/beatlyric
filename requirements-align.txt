@@ -1,3 +1,5 @@
 # Heavy ML dependencies for vocal separation + forced alignment on Linux/CUDA/CPU
 demucs>=4.0.1
 stable-ts>=2.16.0
+ctc-forced-aligner @ git+https://github.com/MahmoudAshraf97/ctc-forced-aligner.git@7c66b95a8d69f5a34d02813bb6ed76c73ce8d887
+pykakasi>=2.3.0

@@ -5,15 +5,39 @@ from __future__ import annotations
 import re
 import wave
 from collections import defaultdict
+from copy import deepcopy
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
 import numpy as np
 
+from beat_analysis import estimate_rhythm
 from common import read_json, write_json
 
-CONSONANT_LEAD_SEC = 0.085
+CONSONANT_LEAD_SEC = 0.115
 PAREN_GROUP_RE = re.compile(r"\(([^)]+)\)")
+
+DISPLAY_META_DEFAULTS: dict[str, Any] = {
+    "content_scale": 1.18,
+    "karaoke_sweep": True,
+    "show_word_highlight": True,
+    "show_pronunciation": True,
+    "show_comment": True,
+    "smooth_lyric_scroll": True,
+    "lyric_word_lift": True,
+    "show_song_context": True,
+}
+
+
+def _ensure_display_meta_defaults(meta: dict[str, Any]) -> bool:
+    """Populate missing display-option defaults in meta; return True if any key was added."""
+    changed = False
+    for key, val in DISPLAY_META_DEFAULTS.items():
+        if key not in meta:
+            meta[key] = val
+            changed = True
+    return changed
 
 
 def _read_mono_wav(wav_path: Path) -> tuple[np.ndarray, int]:
@@ -29,87 +53,23 @@ def _read_mono_wav(wav_path: Path) -> tuple[np.ndarray, int]:
 
 
 def estimate_beat_grid(
-    analysis_wav: Path,
-    aligned_lines: list[dict[str, Any]] | None = None,
-) -> tuple[float, float]:
-    """Estimate studio BPM and beat-1 phase t0 (seconds) from audio onsets."""
+    analysis_wav: Path, bpm: float | None = None,
+) -> tuple[float, float, int, float]:
     samples, sr = _read_mono_wav(analysis_wav)
-    hop = 256
-    n_frames = max(1, len(samples) // hop)
-    frames = samples[: n_frames * hop].reshape(n_frames, hop)
-    env = np.sqrt(np.mean(frames ** 2, axis=1) + 1e-12)
-    onset = np.maximum(0.0, np.diff(env, prepend=env[0]))
+    return estimate_rhythm(samples, sr, bpm)
 
-    # Autocorrelation over 90..165 BPM
-    ac_input = onset - onset.mean()
-    ac = np.correlate(ac_input, ac_input, mode="full")[len(onset) - 1 :]
-    min_lag = max(1, int((60.0 / 165.0) * sr / hop))
-    max_lag = min(len(ac) - 1, int((60.0 / 90.0) * sr / hop))
-    best_lag = min_lag + int(np.argmax(ac[min_lag : max_lag + 1]))
-    rough_bpm = 60.0 / (best_lag * hop / sr)
 
-    # Fine search around rough_bpm (and double/half octave check) for onset pulse energy
-    duration = len(samples) / sr
-    best_score = -1.0
-    best_bpm = rough_bpm
-    best_phi = 0.0
-
-    candidates = np.linspace(max(80.0, rough_bpm - 1.8), min(180.0, rough_bpm + 1.8), 73)
-    for bpm in candidates:
-        b_sec = 60.0 / float(bpm)
-        for phi in np.linspace(0.0, b_sec, 60, endpoint=False):
-            beats = np.arange(phi, min(duration, 180.0), b_sec)
-            idx = np.clip((beats * sr / hop).astype(int), 0, len(onset) - 1)
-            score = float(np.mean(onset[idx]))
-            if score > best_score:
-                best_score = score
-                best_bpm = float(bpm)
-                best_phi = float(phi)
-
-    # Snap BPM to nearest 0.5 if very close to studio integer/half-integer BPM
-    snapped_bpm = round(best_bpm * 2.0) / 2.0
-    if abs(best_bpm - snapped_bpm) <= 0.25:
-        best_bpm = snapped_bpm
-        # Re-optimize phase t0 for snapped BPM
-        b_sec = 60.0 / best_bpm
-        best_phi_score = -1.0
-        for phi in np.linspace(0.0, b_sec, 120, endpoint=False):
-            beats = np.arange(phi, min(duration, 210.0), b_sec)
-            idx = np.clip((beats * sr / hop).astype(int), 0, len(onset) - 1)
-            score = float(np.mean(onset[idx]))
-            if score > best_phi_score:
-                best_phi_score = score
-                best_phi = float(phi)
-
-    # Optional phase alignment hint from aligned singing lines (keep within 4-beat bar phase)
-    if aligned_lines:
-        singing = [ln for ln in aligned_lines if not ln.get("original", "").startswith("♪")]
-        if singing:
-            b_sec = 60.0 / best_bpm
-            # Pick which beat of the 4-beat bar corresponds to Bar 1 Beat 1
-            # Test 4 beat offsets (0, 1, 2, 3) and choose the one placing most lines near Beat 1
-            best_bar_offset = 0
-            best_bar_hits = -1
-            for off in range(4):
-                cand_t0 = best_phi + off * b_sec
-                hits = sum(
-                    1
-                    for ln in singing[:16]
-                    if ((round((ln["start"] - cand_t0) / b_sec)) % 4) == 0
-                )
-                if hits > best_bar_hits:
-                    best_bar_hits = hits
-                    best_bar_offset = off
-            best_phi = (best_phi + best_bar_offset * b_sec) % (4.0 * b_sec)
-            # Keep t0 within [0, 4*b_sec) and prefer small positive offset if > 2*b_sec
-            while best_phi >= b_sec:
-                # Shift back by 4 beats only if still >= 0
-                if best_phi - 4.0 * b_sec >= 0.0:
-                    best_phi -= 4.0 * b_sec
-                else:
-                    break
-
-    return round(best_bpm, 2), round(best_phi, 4)
+@lru_cache(maxsize=8)
+def waveform_peaks(path: Path, last_modified_ns: int) -> dict[str, Any]:
+    """Downsample the analysis audio to roughly 10 ms min/max sections."""
+    samples, sr = _read_mono_wav(path)
+    step = max(1, round(sr * 0.01))
+    windows = np.pad(samples, (0, -len(samples) % step)).reshape(-1, step)
+    return {
+        "interval": step / sr,
+        "min": (windows.min(axis=1) * 127).astype(np.int8).tolist(),
+        "max": (windows.max(axis=1) * 127).astype(np.int8).tolist(),
+    }
 
 
 def _quantize_words_to_rel_beats(
@@ -171,63 +131,82 @@ def _compute_vocal_envelope(wav_path: Path, hop_sec: float = 0.01) -> tuple[np.n
     return norm_rms, norm_onset, hop / float(sr)
 
 
-def _snap_line_start_beat_with_vocals(
-    raw_start_b: float,
-    min_beat: float,
-    bpm: float,
+def _line_start_hint(line: dict[str, Any], beat_sec: float) -> float:
+    start = float(line["start"])
+    words = line.get("words") or []
+    if not words:
+        return start
+
+    first_word = float(words[0]["start"])
+    lrc_start = line.get("lrc_start")
+    if lrc_start is not None and start - first_word > beat_sec:
+        # An upstream overlap cut can push the line past its own words.
+        # Recover the earlier window only when the original LRC supports it.
+        if abs(float(lrc_start) - first_word) <= beat_sec:
+            return first_word
+    if abs(first_word - start) <= beat_sec * 0.25:
+        return (start + first_word) / 2
+    return start
+
+
+def _choose_line_starts(
+    lines: list[dict[str, Any]],
     t0: float,
+    beat_sec: float,
     beats_per_bar: int,
-    rms: np.ndarray,
-    onset: np.ndarray,
-    hop_sec: float,
-) -> float:
-    """Pick the best 0.5-beat line entry within [-1.5, +1.5] beats using vocal attack contrast."""
-    beat_sec = 60.0 / bpm
-    raw_lead_b = max(0.0, raw_start_b - CONSONANT_LEAD_SEC / beat_sec)
-    base_b = round(raw_lead_b * 2.0) / 2.0
-    candidates = [
-        base_b + off
-        for off in (-1.5, -1.0, -0.5, 0.0, 0.5, 1.0, 1.5)
-        if base_b + off >= min_beat
-    ]
-    if not candidates:
-        return max(min_beat, base_b)
+    downbeat_offset: int,
+    vocal_env: tuple[np.ndarray, np.ndarray, float] | None,
+) -> list[float]:
+    """Choose a compatible sequence of half-beat line entries."""
+    if not lines:
+        return []
 
-    pre_n = max(1, int(round(0.18 / hop_sec)))
-    post_n = max(1, int(round(0.28 / hop_sec)))
-    on_pre_n = max(1, int(round(0.06 / hop_sec)))
-    on_post_n = max(1, int(round(0.08 / hop_sec)))
+    minimum = np.floor(-t0 / beat_sec * 2.0) / 2.0
+    options: list[dict[float, tuple[float, float | None]]] = []
+    for line in lines:
+        instrumental = str(line.get("original", "")).strip().startswith("♪")
+        hint = float(line["start"]) if instrumental else _line_start_hint(line, beat_sec) - CONSONANT_LEAD_SEC
+        target = (hint - t0) / beat_sec
+        center = round(target * 2.0) / 2.0
+        candidates = {max(minimum, center)}
+        previous = options[-1] if options else {}
+        if not instrumental:
+            candidates.update(max(minimum, center + delta) for delta in (-1.0, -0.5, 0.5, 1.0))
+        if previous:
+            candidates.add(min(previous) + 0.5)
 
-    best_b = candidates[0]
-    best_score = -1e9
-    for cand_b in candidates:
-        t = t0 + cand_b * beat_sec
-        idx = int(round(t / hop_sec))
-        pre_s = rms[max(0, idx - pre_n) : max(1, idx)]
-        post_s = rms[max(0, idx) : min(len(rms), idx + post_n + 1)]
-        onset_w = onset[max(0, idx - on_pre_n) : min(len(onset), idx + on_post_n + 1)]
+        scores: dict[float, tuple[float, float | None]] = {}
+        for beat in sorted(candidates):
+            compatible = [old for old in previous if old <= beat - 0.5]
+            if previous and not compatible:
+                continue
+            parent = max(compatible, key=lambda old: previous[old][0]) if compatible else None
+            value = -1.15 * abs(beat - target)
+            if not instrumental:
+                phase = (beat - downbeat_offset) % beats_per_bar
+                if phase == 0:
+                    value += 0.18
+                elif phase == round(phase):
+                    value += 0.06
+                if vocal_env is not None:
+                    rms, onset, hop = vocal_env
+                    idx = round(max(0.0, t0 + beat * beat_sec) / hop)
+                    early = rms[max(0, idx - round(0.12 / hop)):idx]
+                    late = rms[idx:idx + round(0.14 / hop)]
+                    attacks = onset[idx:idx + round(0.15 / hop)]
+                    if not len(late) or not len(attacks):
+                        attacks = np.zeros(1)
+                    gain = (float(late.mean()) if len(late) else 0) - (float(early.mean()) if len(early) else 0)
+                    value += 0.20 * gain + 0.14 * float(attacks.max())
+            scores[beat] = (value + (previous[parent][0] if parent is not None else 0), parent)
+        options.append(scores)
 
-        pre_rms = float(np.mean(pre_s)) if len(pre_s) else 0.0
-        post_rms = float(np.mean(post_s)) if len(post_s) else 0.0
-        peak_onset = float(np.max(onset_w)) if len(onset_w) else 0.0
-
-        attack = (post_rms - 0.55 * pre_rms) + 1.2 * peak_onset
-        prox_penalty = 0.32 * abs(cand_b - raw_lead_b)
-        in_bar = round((cand_b % beats_per_bar) * 2.0) / 2.0
-        prior = 0.0
-        if in_bar == 0.0:
-            prior = 0.22
-        elif in_bar == 2.0:
-            prior = 0.12
-        elif abs(in_bar - (beats_per_bar - 0.5)) < 0.01:
-            prior = 0.10
-
-        total = attack + prior - prox_penalty
-        if total > best_score:
-            best_score = total
-            best_b = cand_b
-
-    return round(best_b, 2)
+    beat = max(options[-1], key=lambda candidate: options[-1][candidate][0])
+    selected = []
+    for scores in reversed(options):
+        selected.append(beat)
+        beat = scores[beat][1]
+    return selected[::-1]
 
 
 def _should_use_whole_line(original: str) -> bool:
@@ -311,8 +290,8 @@ def enforce_score_integrity(score: dict[str, Any]) -> dict[str, Any]:
     for ln in lines:
         s_b = _start_beats(ln)
         d_b = max(0.5, float(ln["duration_beats"]))
-        ln["start"] = round(t0 + s_b * beat_sec, 3)
-        ln["end"] = round(t0 + (s_b + d_b) * beat_sec, 3)
+        ln["start"] = round(max(0.0, t0 + s_b * beat_sec), 3)
+        ln["end"] = round(max(0.001, t0 + (s_b + d_b) * beat_sec), 3)
 
         words = ln.get("words") or []
         if words and not ln.get("whole_line"):
@@ -342,6 +321,7 @@ def quantize_timeline_to_score(
     t0: float,
     time_signature: list[int] | None = None,
     vocals_wav: Path | None = None,
+    downbeat_offset: int = 0,
 ) -> dict[str, Any]:
     """Quantize timed lines & words onto a 0.5-beat musical bar/beat score."""
     ts = time_signature or [4, 4]
@@ -354,28 +334,7 @@ def quantize_timeline_to_score(
 
     raw_lines = sorted(timeline_or_aligned.get("lines", []), key=lambda x: x["id"])
 
-    # Pass 1: Choose 0.5-beat line starts guided by vocal onset contrast when available
-    snapped_starts: list[float] = []
-    min_start = 0.0
-    for ln in raw_lines:
-        raw_start_b = max(0.0, (float(ln["start"]) - t0) / beat_sec)
-        is_instrumental = str(ln.get("original", "")).strip().startswith("♪")
-        if vocal_env is not None and not is_instrumental:
-            rms, onset, hop_sec = vocal_env
-            start_b = _snap_line_start_beat_with_vocals(
-                raw_start_b=raw_start_b,
-                min_beat=min_start,
-                bpm=bpm,
-                t0=t0,
-                beats_per_bar=beats_per_bar,
-                rms=rms,
-                onset=onset,
-                hop_sec=hop_sec,
-            )
-        else:
-            start_b = max(min_start, round(raw_start_b * 2.0) / 2.0)
-        snapped_starts.append(start_b)
-        min_start = start_b + 0.5
+    snapped_starts = _choose_line_starts(raw_lines, t0, beat_sec, beats_per_bar, downbeat_offset, vocal_env)
 
     # Pass 2: Snap end beats without overlapping subsequent snapped line starts
     score_lines: list[dict[str, Any]] = []
@@ -413,12 +372,13 @@ def quantize_timeline_to_score(
             "pronunciation": ln.get("pronunciation", ""),
             "translation": ln.get("translation", ""),
             "comment": ln.get("comment"),
+            "culture_note": ln.get("culture_note"),
         })
 
     _apply_repeated_line_consensus(score_lines)
 
     meta = dict(timeline_or_aligned.get("meta", {}))
-    meta.setdefault("content_scale", 1.18)
+    _ensure_display_meta_defaults(meta)
 
     score = {
         "grid": {
@@ -442,35 +402,37 @@ def compile_score_to_timeline(score: dict[str, Any]) -> dict[str, Any]:
     beat_sec = 60.0 / bpm
 
     compiled_lines: list[dict[str, Any]] = []
+    precise_ids = {ln["id"] for ln in score.get("lines", []) if ln.get("word_alignment") == "ctc"}
     for ln in score.get("lines", []):
         bar = int(ln["bar"])
         beat = float(ln["beat"])
-        dur_beats = max(0.25, float(ln["duration_beats"]))
+        dur_beats = max(0.001, float(ln["duration_beats"]))
         total_beats = (bar - 1) * beats_per_bar + (beat - 1.0)
 
-        start = round(t0 + total_beats * beat_sec, 3)
-        end = round(t0 + (total_beats + dur_beats) * beat_sec, 3)
+        start = round(max(0.0, t0 + total_beats * beat_sec), 3)
+        end = round(max(start + 0.001, t0 + (total_beats + dur_beats) * beat_sec), 3)
 
         # Keep score line start/end in sync as well
         ln["start"] = start
         ln["end"] = end
 
         raw_words = ln.get("words") or []
+        minimum_word = 0.001 if ln.get("word_alignment") == "ctc" else 0.04
         words_out: list[dict[str, Any]] = []
         if raw_words:
             for w in raw_words:
                 if "rel_beat" in w:
                     rel_b = max(0.0, float(w["rel_beat"]))
-                    w_dur = max(0.05, float(w.get("duration_beats", 0.25)))
-                    ws = round(min(end - 0.04, start + rel_b * beat_sec), 3)
-                    we = round(min(end, start + (rel_b + w_dur) * beat_sec), 3)
+                    w_dur = max(0.001, float(w.get("duration_beats", 0.25)))
+                    ws = round(max(start, min(end - minimum_word, t0 + (total_beats + rel_b) * beat_sec)), 3)
+                    we = round(min(end, t0 + (total_beats + rel_b + w_dur) * beat_sec), 3)
                 else:
                     ws = round(max(start, min(end - 0.04, float(w.get("start", start)))), 3)
                     we = round(max(ws + 0.04, min(end, float(w.get("end", ws + 0.1)))), 3)
                     if words_out and ws < words_out[-1]["end"]:
                         ws = words_out[-1]["end"]
                 if we <= ws:
-                    we = round(min(end, ws + 0.04), 3)
+                    we = round(min(end, ws + minimum_word), 3)
                 words_out.append({
                     "text": w["text"],
                     "start": ws,
@@ -478,7 +440,7 @@ def compile_score_to_timeline(score: dict[str, Any]) -> dict[str, Any]:
                 })
         else:
             tokens = str(ln["original"]).split()
-            span = max(0.2, end - start)
+            span = end - start
             step = span / max(1, len(tokens))
             for i, tok in enumerate(tokens):
                 words_out.append({
@@ -497,6 +459,7 @@ def compile_score_to_timeline(score: dict[str, Any]) -> dict[str, Any]:
             "pronunciation": ln.get("pronunciation", ""),
             "translation": ln.get("translation", ""),
             "comment": ln.get("comment"),
+            "culture_note": ln.get("culture_note"),
         })
 
     # Ensure strictly non-overlapping bounds if user nudged lines tightly
@@ -506,12 +469,13 @@ def compile_score_to_timeline(score: dict[str, Any]) -> dict[str, Any]:
         cur = compiled_lines[i]
         if cur["start"] < prev["end"] and prev["start"] < cur["start"]:
             prev["end"] = cur["start"]
+            minimum_word = 0.001 if prev["id"] in precise_ids else 0.04
             for w in prev["words"]:
-                w["start"] = min(w["start"], max(prev["start"], prev["end"] - 0.04))
+                w["start"] = min(w["start"], max(prev["start"], prev["end"] - minimum_word))
                 w["end"] = min(w["end"], prev["end"])
 
     meta = dict(score.get("meta", {}))
-    meta.setdefault("content_scale", 1.18)
+    _ensure_display_meta_defaults(meta)
 
     return {
         "meta": meta,
@@ -532,7 +496,7 @@ def ensure_score_file(
     raw_llm_path = work_dir / "raw_lyrics_for_llm.json"
 
     source_tl: dict[str, Any] | None = None
-    for candidate in (timeline_path, aligned_path, raw_llm_path):
+    for candidate in (aligned_path, raw_llm_path, timeline_path):
         if candidate.exists():
             source_tl = read_json(candidate)
             break
@@ -548,10 +512,7 @@ def ensure_score_file(
         grid = score.get("grid", {})
         beat_sec = 60.0 / float(grid.get("bpm", 120.0))
         tl_by_id = {ln["id"]: ln for ln in source_tl.get("lines", [])}
-        upgraded = False
-        if "content_scale" not in score.get("meta", {}):
-            score["meta"]["content_scale"] = 1.18
-            upgraded = True
+        upgraded = _ensure_display_meta_defaults(score.setdefault("meta", {}))
         for ln in score.get("lines", []):
             if "whole_line" not in ln:
                 ln["whole_line"] = False
@@ -585,13 +546,20 @@ def ensure_score_file(
             write_json(initial_path, score)
         return score
 
-    if bpm is None or t0 is None:
-        est_bpm, est_t0 = estimate_beat_grid(work_dir / "analysis.wav", source_tl.get("lines"))
-        bpm = bpm or est_bpm
-        t0 = est_t0 if t0 is None else t0
+    offset = 0
+    margin = None
+    if t0 is None:
+        bpm, t0, offset, margin = estimate_beat_grid(work_dir / "analysis.wav", bpm=bpm)
+    elif bpm is None:
+        bpm, _, _, _ = estimate_beat_grid(work_dir / "analysis.wav")
 
     vocals_wav = (work_dir / "vocals.wav") if (work_dir / "vocals.wav").exists() else (work_dir / "analysis.wav")
-    score = quantize_timeline_to_score(source_tl, bpm=bpm, t0=t0, vocals_wav=vocals_wav)
+    score = quantize_timeline_to_score(
+        source_tl, bpm=bpm, t0=t0, vocals_wav=vocals_wav, downbeat_offset=offset,
+    )
+    score["grid"]["downbeat_offset"] = offset
+    if margin is not None:
+        score["grid"]["downbeat_margin"] = margin
     write_json(score_path, score)
     write_json(initial_path, score)
     compiled = compile_score_to_timeline(score)
@@ -599,13 +567,68 @@ def ensure_score_file(
     return score
 
 
+def _copy_rebased_timing(
+    line: dict[str, Any], previous: dict[str, Any],
+    old_grid: dict[str, Any], new_grid: dict[str, Any],
+) -> None:
+    """Copy a line's timing while keeping its original position in the song."""
+    old_period = 60.0 / old_grid["bpm"]
+    new_period = 60.0 / new_grid["bpm"]
+    beats_per_bar = new_grid["time_signature"][0]
+    beats = (previous["bar"] - 1) * beats_per_bar + (previous["beat"] - 1)
+    ratio = old_period / new_period
+    new_beats = (old_grid["t0"] - new_grid["t0"]) / new_period + beats * ratio
+    bar = int(new_beats // beats_per_bar)
+    line.update(bar=bar + 1, beat=1 + (new_beats - bar * beats_per_bar),
+                duration_beats=previous["duration_beats"] * ratio)
+    line["words"] = [dict(word) for word in previous.get("words", [])]
+    for word in line["words"]:
+        if "rel_beat" in word:
+            word["rel_beat"] *= ratio
+        if "duration_beats" in word:
+            word["duration_beats"] *= ratio
+
+
+def _keep_manual_neighbors(
+    lines: list[dict[str, Any]], previous: dict[int, dict[str, Any]],
+    old_grid: dict[str, Any], grid: dict[str, Any],
+) -> None:
+    """Keep an old neighboring placement when a new one would clip a manual line."""
+    beats_per_bar = grid["time_signature"][0]
+    protected = {line["id"] for line in lines if line.get("timing_edited")}
+
+    def start(line: dict[str, Any]) -> float:
+        return (line["bar"] - 1) * beats_per_bar + line["beat"] - 1
+
+    # Reverting a neighbor can expose another collision at its other boundary.
+    pairs = list(zip(lines, lines[1:]))
+    while protected:
+        added = set()
+        for left, right in pairs:
+            if start(left) + left["duration_beats"] <= start(right) + 1e-7:
+                continue
+            one, other = left, right
+            if right["id"] in protected:
+                one, other = right, left
+            if one["id"] in protected and other["id"] not in protected and other["id"] in previous:
+                _copy_rebased_timing(other, previous[other["id"]], old_grid, grid)
+                added.add(other["id"])
+        if not added:
+            return
+        protected.update(added)
+
+
 def requantize_score_with_grid(
     work_dir: Path,
     bpm: float,
     t0: float,
     current_score: dict[str, Any] | None = None,
+    persist: bool = True,
+    lines_only: bool = False,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """Re-quantize original aligned lyrics onto a new (bpm, t0) grid while preserving annotations."""
+    if not 40 <= bpm <= 240 or not -2 <= t0 <= 30:
+        raise ValueError("BPM이나 박자 위치 범위를 확인하세요.")
     aligned_path = work_dir / "aligned_lyrics.json"
     raw_llm_path = work_dir / "raw_lyrics_for_llm.json"
     timeline_path = work_dir / "timeline.json"
@@ -628,50 +651,86 @@ def requantize_score_with_grid(
     new_score = quantize_timeline_to_score(
         source_tl,
         bpm=round(float(bpm), 2),
-        t0=round(float(t0), 4),
+        t0=round(float(t0), 6),
         time_signature=ts,
         vocals_wav=vocals_wav,
+        downbeat_offset=(base_score or {}).get("grid", {}).get("downbeat_offset", 0),
     )
 
     if base_score:
-        new_score.setdefault("meta", {})
-        for key in ("style", "content_scale", "title", "artist", "language", "accent_color", "spotify_track_id", "spotify_url", "album", "added_at"):
-            if key in base_score.get("meta", {}):
-                new_score["meta"][key] = base_score["meta"][key]
+        new_score["meta"].update(base_score.get("meta", {}))
+        base_grid = base_score.get("grid", {})
+        new_score["grid"]["downbeat_offset"] = base_grid.get("downbeat_offset", 0)
+        if base_grid.get("t0") == new_score["grid"]["t0"] and base_grid.get("bpm") == new_score["grid"]["bpm"]:
+            if "downbeat_margin" in base_grid:
+                new_score["grid"]["downbeat_margin"] = base_grid["downbeat_margin"]
 
+        baseline_path = work_dir / "score_initial.json"
+        baseline = read_json(baseline_path) if baseline_path.exists() else {}
+        baseline_grid = baseline.get("grid", {})
+        same_grid = all(baseline_grid.get(key) == base_grid.get(key) for key in ("bpm", "t0"))
+        initial_lines = {row["id"]: row for row in baseline.get("lines", [])} if same_grid else {}
+        timing_fields = ("bar", "beat", "duration_beats") if lines_only else ("bar", "beat", "duration_beats", "words")
         by_id = {int(ln["id"]): ln for ln in base_score.get("lines", []) if "id" in ln}
         for ln in new_score.get("lines", []):
             prev = by_id.get(int(ln["id"]))
             if not prev:
                 continue
-            for field in ("original", "pronunciation", "translation", "comment", "whole_line"):
+            for field in ("original", "pronunciation", "translation", "comment", "culture_note", "whole_line"):
                 if field in prev:
                     ln[field] = prev[field]
 
-    new_score = enforce_score_integrity(new_score)
+            original = initial_lines.get(ln["id"])
+            legacy_edit = original and any(prev.get(field) != original.get(field) for field in timing_fields)
+            if lines_only or prev.get("word_alignment") == "ctc" or prev.get("word_timing_edited"):
+                ln["words"] = deepcopy(prev.get("words", []))
+                for field in ("word_alignment", "word_timing_edited"):
+                    if field in prev:
+                        ln[field] = prev[field]
+            if prev.get("timing_edited") or legacy_edit:
+                _copy_rebased_timing(ln, prev, base_grid, new_score["grid"])
+                ln["timing_edited"] = True
+
+        _keep_manual_neighbors(new_score["lines"], by_id, base_grid, new_score["grid"])
     compiled = compile_score_to_timeline(new_score)
-    write_json(score_path, new_score)
-    write_json(timeline_path, compiled)
+    if persist:
+        write_json(score_path, new_score)
+        write_json(timeline_path, compiled)
     return new_score, compiled
 
 
-def reset_to_algorithm_score(work_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
-    """Restore score.json from algorithm baseline (score_initial.json) and recompile timeline.json."""
-    initial_path = work_dir / "score_initial.json"
+def reset_to_algorithm_score(
+    work_dir: Path,
+    current_score: dict[str, Any] | None = None,
+    persist: bool = True,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    """Reanalyze the audio at the current BPM while preserving lyric timing."""
     score_path = work_dir / "score.json"
-    timeline_path = work_dir / "timeline.json"
+    if current_score is None:
+        current_score = read_json(score_path)
 
-    if initial_path.exists():
-        score = read_json(initial_path)
-        score.setdefault("meta", {}).setdefault("content_scale", 1.18)
-        for ln in score.get("lines", []):
-            ln.setdefault("whole_line", False)
-        compiled = compile_score_to_timeline(score)
+    score = deepcopy(current_score)
+    previous_grid = current_score["grid"]
+    bpm = float(previous_grid["bpm"])
+    if not 40 <= bpm <= 240:
+        raise ValueError("BPM은 40~240이어야 합니다.")
+
+    _, phase, downbeat, margin = estimate_beat_grid(work_dir / "analysis.wav", bpm=bpm)
+    grid = score["grid"]
+    beats_per_bar = grid.setdefault("time_signature", [4, 4])[0]
+    grid["t0"] = phase
+    if beats_per_bar == 4:
+        grid.update(downbeat_offset=downbeat, downbeat_margin=margin)
+    else:
+        grid.pop("downbeat_margin", None)
+
+    if phase != previous_grid["t0"]:
+        for line, previous_line in zip(score["lines"], current_score["lines"]):
+            _copy_rebased_timing(line, previous_line, previous_grid, grid)
+
+    _ensure_display_meta_defaults(score.setdefault("meta", {}))
+    timeline = compile_score_to_timeline(score)
+    if persist:
         write_json(score_path, score)
-        write_json(timeline_path, compiled)
-        return score, compiled
-
-    score = ensure_score_file(work_dir, force=True)
-    compiled = compile_score_to_timeline(score)
-    write_json(timeline_path, compiled)
-    return score, compiled
+        write_json(work_dir / "timeline.json", timeline)
+    return score, timeline

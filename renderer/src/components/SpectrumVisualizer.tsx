@@ -32,9 +32,11 @@ export const SpectrumVisualizer: React.FC<Props> = ({
 
     return (
       <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`} style={{ display: "block" }}>
-        {bars.map((val, i) => {
+        {bars.map((_, i) => {
           const distFromCenter = Math.abs(i - (count - 1) / 2) / (count / 2);
-          const envelope = 1 - Math.pow(distFromCenter, 1.8);
+          const binIdx = Math.min(count - 1, Math.floor(distFromCenter * (count - 1)));
+          const val = bars[binIdx] ?? 0.15;
+          const envelope = 1 - Math.pow(distFromCenter, 1.75);
           const barH = Math.max(3, (0.14 + val * 0.86) * envelope * (height - 2));
           const x = i * (barW + gap);
           const y = centerY - barH / 2;

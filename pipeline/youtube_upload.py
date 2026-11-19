@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
-from common import ROOT_DIR, WORK_DIR, read_json
+from common import JobInterrupted, ROOT_DIR, WORK_DIR, read_json, write_json
 from env_utils import get_env
 
 
@@ -110,6 +112,9 @@ def build_youtube_metadata(work_dir: Path) -> dict[str, Any]:
         if isinstance(c, dict) and c.get("phrase") and len(vocab_lines) < 12:
             vocab_lines.append(f"• {c['phrase']} ({c.get('tag', 'NOTE')}): {c.get('meaning', '')}")
 
+    if ts_lines and not ts_lines[0].startswith("0:00 "):
+        ts_lines.insert(0, "0:00 Intro")
+
     parts = [f"{artist_raw} - {title_raw}" if artist_raw else title_raw]
     if meta.get("spotify_url"):
         parts.append(f"Spotify: {meta['spotify_url']}")
@@ -128,7 +133,11 @@ def build_youtube_metadata(work_dir: Path) -> dict[str, Any]:
     }
 
 
-def upload_private_video(work_dir: Path, video_path: Path) -> dict[str, Any]:
+def upload_private_video(
+    work_dir: Path,
+    video_path: Path,
+    interrupted: Callable[[], bool] | None = None,
+) -> dict[str, Any]:
     """Upload rendered MP4 to YouTube as private video."""
     from googleapiclient.discovery import build
     from googleapiclient.http import MediaFileUpload
@@ -157,8 +166,56 @@ def upload_private_video(work_dir: Path, video_path: Path) -> dict[str, Any]:
     request = youtube.videos().insert(part="snippet,status", body=body, media_body=media)
 
     response = None
+    if interrupted is not None:
+        checkpoint = work_dir / ".youtube-upload.json"
+        stat = video_path.stat()
+        identity = {"file": str(video_path.resolve()), "size": stat.st_size, "mtime_ns": stat.st_mtime_ns}
+        saved = read_json(checkpoint) if checkpoint.exists() else {}
+        if saved.get("video") == identity:
+            response = saved.get("response")
+            request.resumable_uri = saved.get("uri")
+        if interrupted():
+            raise JobInterrupted()
+
+        if not response and request.resumable_uri:
+            # Reconcile the offset with the server even if the last chunk succeeded
+            # just before a shutdown.
+            reply, content = request.http.request(
+                request.resumable_uri, "PUT",
+                headers={"Content-Range": f"bytes */{stat.st_size}", "Content-Length": "0"},
+            )
+            if reply.status in (200, 201):
+                response = json.loads(content)
+            elif reply.status == 308:
+                uploaded = reply.get("range")
+                request.resumable_progress = int(uploaded.rsplit("-", 1)[1]) + 1 if uploaded else 0
+            elif reply.status in (404, 410):
+                raise RuntimeError("이전 YouTube 업로드 세션이 만료되었습니다. 업로드 완료 여부를 확인한 뒤 새 렌더를 시작하세요.")
+            else:
+                raise RuntimeError(f"YouTube 업로드 진행 위치 확인 실패 ({reply.status})")
+
+        if not response and not request.resumable_uri:
+            # Persist the session before the first PUT so even a completed first
+            # chunk can be reconciled after a restart.
+            headers = {**request.headers,
+                       "X-Upload-Content-Type": media.mimetype(),
+                       "X-Upload-Content-Length": str(stat.st_size),
+                       "Content-Length": str(request.body_size)}
+            reply, _ = request.http.request(request.uri, request.method, body=request.body, headers=headers)
+            if reply.status != 200 or "location" not in reply:
+                raise RuntimeError(f"YouTube 업로드 세션 생성 실패 ({reply.status})")
+            request.resumable_uri = reply["location"]
+            write_json(checkpoint, {"video": identity, "uri": request.resumable_uri})
+
     while response is None:
+        if interrupted is not None and interrupted():
+            raise JobInterrupted()
         _, response = request.next_chunk()
+        if interrupted is not None and response is None:
+            write_json(checkpoint, {"video": identity, "uri": request.resumable_uri})
+
+    if interrupted is not None:
+        write_json(checkpoint, {"video": identity, "uri": request.resumable_uri, "response": response})
 
     video_id = response["id"]
     return {

@@ -47,6 +47,9 @@ def _merge_line_annotations(lines: list[dict[str, Any]], by_id: dict[int, dict[s
             ln["translation"] = str(ann["translation"] or "")
         if "comment" in ann:
             ln["comment"] = ann["comment"]
+        if "culture_note" in ann:
+            note = ann["culture_note"]
+            ln["culture_note"] = note.strip()[:180] if isinstance(note, str) and note.strip() else None
         if "whole_line" in ann:
             ln["whole_line"] = bool(ann["whole_line"])
         updated += 1
@@ -61,13 +64,21 @@ def apply_annotations_to_work_dir(
     by_id = _normalize_annotation_map(annotations)
     score = ensure_score_file(work_dir)
 
+    context = annotations.get("song_context") if isinstance(annotations, dict) else None
+    if isinstance(context, dict):
+        context = {key: context[key].strip()[:180] for key in ("meaning", "culture")
+                   if isinstance(context.get(key), str) and context[key].strip()}
     updated = _merge_line_annotations(score.get("lines", []), by_id)
+    if context:
+        score.setdefault("meta", {})["song_context"] = context
     write_json(work_dir / "score.json", score)
 
     initial_path = work_dir / "score_initial.json"
     if initial_path.exists():
         initial_score = read_json(initial_path)
         _merge_line_annotations(initial_score.get("lines", []), by_id)
+        if context:
+            initial_score.setdefault("meta", {})["song_context"] = context
         write_json(initial_path, initial_score)
 
     compiled = compile_score_to_timeline(score)
@@ -90,17 +101,49 @@ def _extract_json_payload(raw_text: str) -> Any:
         raise
 
 
-def _build_enrichment_prompt(song_label: str, lang: str, payload_lines: list[dict[str, Any]]) -> str:
-    return (
-        f"You are creating Korean language-learning study notes for the song '{song_label}' (primary language: {lang}).\n"
-        "Do NOT inspect external files or run shell commands. Return ONLY a raw JSON array (no markdown prose).\n"
-        "For EVERY item in the input array, keep the exact same integer `id` and return a JSON array of objects with:\n"
-        "- `id`: integer\n"
-        "- `pronunciation`: natural Korean Hangul phonetic transcription matching how it is sung (empty string \"\" for instrumental markers like ♪ ...)\n"
-        "- `translation`: natural idiomatic Korean translation (short Korean label for instrumental markers)\n"
-        "- `comment`: either `null` OR an object `{ \"tag\": \"IDIOM\"|\"SLANG\"|\"CULTURE\"|\"GRAMMAR\", \"phrase\": \"short key expression\", \"meaning\": \"concise Korean meaning\", \"tip\": \"one-sentence Korean nuance/usage tip\" }`. Provide helpful `comment` objects on roughly 30-45% of notable lines and `null` on repetitive chorus lines or instrumentals.\n\n"
-        f"Input lines JSON:\n{json.dumps(payload_lines, ensure_ascii=False)}"
+def _build_enrichment_prompt(
+    song_label: str,
+    lang: str,
+    payload_lines: list[dict[str, Any]],
+    song_lyrics: list[str] | None = None,
+) -> str:
+    prompt = (
+        f"Write Korean study and listening notes for '{song_label}' (primary language: {lang}).\n"
+        "Return only a JSON object with a 'lines' array. For every input line keep the same id and return:\n"
+        "- pronunciation: natural Korean Hangul phonetics, or empty for an instrumental.\n"
+        "- translation: idiomatic Korean, or a short Korean label for an instrumental.\n"
+        "- comment: null or {tag, phrase, meaning, tip}. Use tags IDIOM, SLANG, CULTURE or GRAMMAR. "
+        "Annotate notable expressions and avoid repeating chorus notes.\n"
+        "- culture_note: null or one short Korean sentence on a specific cultural reference, genre convention, "
+        "or narrative meaning that helps interpret this line. Avoid guessing undocumented artist intent or "
+        "specific facts. Treat debatable meanings as interpretations. Use null when uncertain or repetitive.\n"
+        "Input lines: " + json.dumps(payload_lines, ensure_ascii=False)
     )
+    if song_lyrics is not None:
+        prompt += (
+            "\nAlso return a top-level 'song_context' object with short Korean strings 'meaning' and 'culture'. "
+            "Explain the overall theme supported by the lyrics, and explain relevant cultural or genre context "
+            "when grounded in the lyrics. Use an empty string for uncertain background. "
+            "Keep each field within 100 Korean characters. The following song-wide lyrics are context, "
+            "not additional lines to annotate:\n" + json.dumps(song_lyrics, ensure_ascii=False)
+        )
+    return prompt
+
+
+def _collect_enrichment(result: dict[str, Any], text: str) -> None:
+    parsed = _extract_json_payload(text)
+    if isinstance(parsed, dict):
+        if parsed.get("song_context"):
+            result["song_context"] = parsed["song_context"]
+        parsed = parsed.get("lines", parsed.get("annotations"))
+    if isinstance(parsed, list):
+        result["lines"].extend(parsed)
+    else:
+        raise ValueError("주석 응답에서 가사 목록을 찾을 수 없습니다.")
+
+
+def _song_lyrics(lines: list[dict[str, Any]]) -> list[str]:
+    return list(dict.fromkeys(line["original"] for line in lines if not line["original"].startswith("♪")))
 
 
 def enrich_with_gemini_api(
@@ -116,7 +159,7 @@ def enrich_with_gemini_api(
     song_label = f"{meta.get('title', work_dir.name)} - {meta.get('artist', '')}".strip(" -")
     lang = meta.get("language", "en")
 
-    collected: list[dict[str, Any]] = []
+    collected: dict[str, Any] = {"lines": []}
     endpoint = (
         f"https://generativelanguage.googleapis.com/v1beta/models/{model}"
         f":generateContent?key={api_key}"
@@ -128,7 +171,7 @@ def enrich_with_gemini_api(
             {"id": ln["id"], "original": ln["original"]}
             for ln in batch
         ]
-        prompt = _build_enrichment_prompt(song_label, lang, payload_lines)
+        prompt = _build_enrichment_prompt(song_label, lang, payload_lines, _song_lyrics(lines) if start_idx == 0 else None)
         req_body = json.dumps({
             "contents": [{"role": "user", "parts": [{"text": prompt}]}],
             "generationConfig": {"responseMimeType": "application/json"},
@@ -148,11 +191,7 @@ def enrich_with_gemini_api(
             raise RuntimeError(f"Gemini API error ({exc.code}): {err_body}") from exc
 
         text = resp_data["candidates"][0]["content"]["parts"][0]["text"]
-        parsed = _extract_json_payload(text)
-        if isinstance(parsed, dict):
-            parsed = parsed.get("lines") or parsed.get("annotations") or []
-        if isinstance(parsed, list):
-            collected.extend(parsed)
+        _collect_enrichment(collected, text)
 
     return apply_annotations_to_work_dir(work_dir, collected)
 
@@ -175,10 +214,12 @@ def export_llm_prompt_bundle(work_dir: Path) -> Path:
         "```\n\n"
         "*(타이밍·박자·단어 오프셋은 `score.json`의 값이 그대로 보존되며 LLM이 건드리지 않습니다.)*\n\n"
         "## 요청 프롬프트 & 입력 JSON\n\n"
-        "각 항목의 `id`를 유지한 JSON 배열(`[{\"id\": 0, \"pronunciation\": \"...\", \"translation\": \"...\", \"comment\": null | {\"tag\": \"IDIOM\", \"phrase\": \"...\", \"meaning\": \"...\", \"tip\": \"...\"}}]`)로 응답해 주세요:\n\n"
-        "```json\n"
-        f"{json.dumps(raw_items, ensure_ascii=False, indent=2)}\n"
-        "```\n"
+        + _build_enrichment_prompt(
+            f"{meta.get('title', work_dir.name)} - {meta.get('artist', '')}".strip(" -"),
+            meta.get("language", "en"),
+            raw_items,
+            _song_lyrics(score.get("lines", [])),
+        )
     )
     out_path.write_text(content, encoding="utf-8")
     return out_path
@@ -199,7 +240,7 @@ def enrich_with_agy_acp(
     chosen_model = model_id or get_env("AGY_ACP_MODEL", DEFAULT_ACP_MODEL) or DEFAULT_ACP_MODEL
     timeout_val = float(get_env("AGY_ACP_TIMEOUT_SEC", str(session_timeout_sec)) or session_timeout_sec)
 
-    collected: list[dict[str, Any]] = []
+    collected: dict[str, Any] = {"lines": []}
     with ScopedAgyAcpSession(
         work_dir=work_dir,
         model_id=chosen_model,
@@ -212,13 +253,9 @@ def enrich_with_agy_acp(
                 {"id": ln["id"], "original": ln["original"]}
                 for ln in batch
             ]
-            prompt = _build_enrichment_prompt(song_label, lang, payload_lines)
+            prompt = _build_enrichment_prompt(song_label, lang, payload_lines, _song_lyrics(lines) if start_idx == 0 else None)
             reply_text = session.prompt_text(prompt, timeout_sec=min(120.0, timeout_val))
-            parsed = _extract_json_payload(reply_text)
-            if isinstance(parsed, dict):
-                parsed = parsed.get("lines") or parsed.get("annotations") or []
-            if isinstance(parsed, list):
-                collected.extend(parsed)
+            _collect_enrichment(collected, reply_text)
 
     write_json(work_dir / "annotations_acp.json", collected)
     return apply_annotations_to_work_dir(work_dir, collected)

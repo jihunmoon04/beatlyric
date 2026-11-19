@@ -1,4 +1,4 @@
-export type StylePreset = "minimal" | "editorial" | "classic2";
+export type StylePreset = "minimal" | "editorial" | "classic2" | "shorts";
 
 export interface WordTiming {
   text: string;
@@ -23,6 +23,7 @@ export interface LyricLine {
   words: WordTiming[];
   whole_line?: boolean;
   comment: LearningComment | null;
+  culture_note?: string | null;
 }
 
 export interface TrackMeta {
@@ -34,6 +35,14 @@ export interface TrackMeta {
   style?: StylePreset;
   accent_color?: string;
   content_scale?: number;
+  karaoke_sweep?: boolean;
+  show_word_highlight?: boolean;
+  show_pronunciation?: boolean;
+  show_comment?: boolean;
+  smooth_lyric_scroll?: boolean;
+  lyric_word_lift?: boolean;
+  show_song_context?: boolean;
+  song_context?: { meaning?: string; culture?: string };
 }
 
 export interface TimelineData {
@@ -55,4 +64,8 @@ export type CompositionProps = {
   showPronunciation?: boolean;
   showComment?: boolean;
   showWordHighlight?: boolean;
+  karaokeSweep?: boolean;
+  smoothLyricScroll?: boolean;
+  lyricWordLift?: boolean;
+  showSongContext?: boolean;
 };

@@ -7,9 +7,13 @@
     "typecheck": "tsc --noEmit",
     "render:minimal": "remotion render src/index.ts MinimalWave out/minimal.mp4",
     "render:editorial": "remotion render src/index.ts Editorial out/editorial.mp4",
-    "render:classic2": "remotion render src/index.ts Classic2 out/classic2.mp4"
+    "render:classic2": "remotion render src/index.ts Classic2 out/classic2.mp4",
+    "render:shorts": "remotion render src/index.ts ShortsVertical out/shorts.mp4"
   },
   "dependencies": {
+    "@fontsource/noto-sans-jp": "^5.3.1",
+    "@fontsource/noto-sans-kr": "^5.3.1",
+    "@fontsource/noto-serif-kr": "^5.3.1",
     "@remotion/cli": "^4.0.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
